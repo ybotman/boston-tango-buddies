@@ -1430,11 +1430,12 @@ async function requestListener(req, res) {
   }
 }
 
-const server = http.createServer(requestListener);
-
-// Only listen when run directly (`node app.js`). On Vercel, api/index.js
-// imports `requestListener` and drives it as a serverless function instead.
+// Only create/listen on a real http.Server when run directly (`node app.js`).
+// Creating an http.Server at module top-level trips Vercel's server-detection
+// and crashes the serverless handler ("default export must be a function or
+// server"). On Vercel the handler just imports `requestListener` below.
 if (require.main === module) {
+  const server = http.createServer(requestListener);
   server.listen(PORT, () => {
     console.log(`Tango Buddy POC running -> http://localhost:${PORT}`);
     console.log(`Store backend: ${store.USE_FIRESTORE ? 'Firestore (firebase-admin)' : 'local JSON (data/db.json)'}`);
@@ -1442,4 +1443,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { requestListener, server };
+// Default export IS the (req, res) handler, so whichever file Vercel resolves
+// as the function handler is valid. Named export kept for existing callers.
+module.exports = requestListener;
+module.exports.requestListener = requestListener;
