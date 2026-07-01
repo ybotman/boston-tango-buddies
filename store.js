@@ -51,6 +51,10 @@ const fs = require('fs');
 const path = require('path');
 
 const DB_PATH = path.join(__dirname, 'data', 'db.json');
+// Vercel-safe write target. On Vercel the project filesystem (where the bundled
+// seed DB_PATH lives) is READ-ONLY, but /tmp is writable within a warm instance.
+const TMP_PATH = '/tmp/db.json';
+const ON_VERCEL = !!process.env.VERCEL;
 
 // Backend selection: Firestore ONLY when the full credential set is present.
 const USE_FIRESTORE = !!(
@@ -81,9 +85,32 @@ function id(prefix) {
 const JSON_KEYS = { organizers: 'teachers' };
 function jkey(coll) { return JSON_KEYS[coll] || coll; }
 
+// Decide (once, cached) where writes go. Never write to DB_PATH on Vercel — its
+// filesystem is read-only. Off Vercel, write to DB_PATH exactly as before, unless
+// it happens to be non-writable (then fall back to /tmp too).
+let _writePath = null;
+function writePath() {
+  if (_writePath) return _writePath;
+  if (ON_VERCEL) { _writePath = TMP_PATH; return _writePath; }
+  try {
+    fs.accessSync(DB_PATH, fs.constants.W_OK);
+    _writePath = DB_PATH;
+  } catch (e) {
+    _writePath = TMP_PATH;
+  }
+  return _writePath;
+}
+
 function readFile() {
+  let raw = null;
+  // Prefer a writable copy in /tmp if one exists (a warm Vercel instance that has
+  // already taken a write); otherwise read the bundled seed at DB_PATH.
+  try { raw = fs.readFileSync(TMP_PATH, 'utf8'); } catch (e) { raw = null; }
+  if (raw == null) {
+    try { raw = fs.readFileSync(DB_PATH, 'utf8'); } catch (e) { raw = null; }
+  }
   let db;
-  try { db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); }
+  try { db = JSON.parse(raw); }
   catch (e) { db = {}; }
   db.newbies = db.newbies || [];
   db.volunteers = db.volunteers || [];
@@ -101,7 +128,9 @@ function readFile() {
 }
 
 function writeFile(db) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+  // Copy-on-first-write: readFile() has already merged the bundled seed into `db`,
+  // so writing the whole object to /tmp is itself the seed copy on a cold instance.
+  fs.writeFileSync(writePath(), JSON.stringify(db, null, 2));
 }
 
 const jsonBackend = {

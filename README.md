@@ -208,11 +208,29 @@ open — the zero-config local experience.
 
 ## Deploy to Vercel
 
-`vercel.json` rewrites **all** requests to a single serverless function
-(`api/index.js`) that delegates to the exact same `requestListener` exported from
-`server.js` — so the app behaves identically locally (`node server.js`) and on
-Vercel. `firebase-admin` is a declared dependency (installed on Vercel; only
-imported when the Firebase envs are present).
+`vercel.json` rewrites requests to a single serverless function (`api/index.js`)
+that delegates to the exact same `requestListener` exported from `server.js` — so
+the app behaves identically locally (`node server.js`) and on Vercel.
+`firebase-admin` is a declared dependency (installed on Vercel; only imported when
+the Firebase envs are present).
+
+> **v0.5.1 — Vercel deployability fix.** Two things make the serverless function
+> actually run (previously every route 500'd with `FUNCTION_INVOCATION_FAILED`):
+>
+> 1. **Static assets bypass the function.** The rewrite `source` uses a negative
+>    lookahead — `"/((?!assets/|favicon\\.).*)"` → `/api/index` — so `/assets/*`
+>    and `/favicon.*` are served as **static files by Vercel** and never hit the
+>    catch-all function. Everything else still rewrites to the function.
+> 2. **The seed is bundled + writes fall back to `/tmp`.** `functions."api/index.js".includeFiles`
+>    bundles `data/db.json` into the function so the local-JSON backend can **read**
+>    the seed. Because Vercel's project filesystem is **read-only**, `store.js`
+>    detects Vercel (`process.env.VERCEL`) and, when there are **no Firebase envs**,
+>    writes to **`/tmp/db.json`** instead (copy-on-first-write from the bundled seed;
+>    reads prefer `/tmp/db.json` if it exists). So a no-Firebase Vercel deploy now
+>    **renders all seeded content and no longer crashes** — writes persist within a
+>    warm instance and reset on cold start. **With the Firebase envs set, Firestore
+>    is used and none of the `/tmp` path runs.** Local `node server.js` is unchanged:
+>    it writes to `data/db.json` exactly as before.
 
 ```bash
 # from poc/
@@ -224,11 +242,12 @@ vercel --prod     # deploy production
 Set `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` and
 `ADMIN_PASS` in the Vercel project's Environment Variables.
 
-> **Data persistence:** on Vercel the filesystem is **ephemeral** — writes to
-> `data/db.json` do **not** persist across invocations / cold starts. **On Vercel
-> you must use Firestore** (set the Firebase envs). The JSON file backend is for
-> **local dev only**. Without the Firebase envs a Vercel deploy still serves, but
-> only reads the bundled seed `db.json` (writes are lost).
+> **Data persistence:** on Vercel the filesystem is **ephemeral** and the project
+> tree is **read-only** — so the JSON backend reads the bundled seed and writes to
+> **`/tmp/db.json`** (see v0.5.1 above), which persists only within a warm instance
+> and resets on cold start. For durable data **use Firestore** (set the Firebase
+> envs). The JSON file backend is for **local dev** (writes to `data/db.json`) and
+> as a **no-crash fallback** on Vercel.
 
 The footer-only meta pages (`/updates`, `/ideas`, `/todo`) are backed by a `meta`
 object in `db.json` (`{ updates:[], ideas:[], todos:[] }`) and read through
@@ -251,8 +270,8 @@ poc/
 ├── server.js        # HTTP server + page templates + routes; exports requestListener
 ├── store.js         # the ONLY data layer — env-gated Firestore / local-JSON (async)
 ├── api/index.js     # Vercel serverless entrypoint (delegates to requestListener)
-├── vercel.json      # Vercel catch-all rewrite → /api/index
-├── package.json     # v0.5.0; firebase-admin dependency (used only when envs present)
+├── vercel.json      # Vercel rewrite → /api/index (assets/favicon excluded) + includeFiles seed
+├── package.json     # v0.5.1; firebase-admin dependency (used only when envs present)
 ├── data/db.json     # local JSON store (9 organizers + 9 lesson studios + 4 TangoTiempo events + meta; empty newbies/volunteers/messages/checkins)
 ├── assets/          # hero.png / icon.png slots (+ README)
 └── README.md        # this file
