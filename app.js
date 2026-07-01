@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 const store = require('./store');
+const { fetchTangoTiempoEvent } = require('./tangotiempo');
 
 // Version comes straight from package.json (zero-dependency, read once at start).
 const VERSION = require('./package.json').version;
@@ -255,32 +256,30 @@ function page(title, body, opts) {
 <body><div class="wrap">
 <div class="nav">
   <a href="/">Learn tango</a>
-  <a href="/volunteer">Be a buddy</a>
   <a href="/events">Events</a>
-  <a href="/chat">Chat</a>
-  <a href="/social">Social</a>
-  <a href="/coming">What's Coming</a>
   <a href="/lessons">Lessons</a>
-  <a href="/admin">Admin</a>
+  <a href="/social">Social</a>
+  <a href="/chat">Chat</a>
 </div>
 ${body}
 ${siteFooter()}
 </div></body></html>`;
 }
 
-// Shared footer on EVERY page. Primary actions + a meta line. These meta links
-// (Updates / Ideas / To-do) are the primary nav for those pages and deliberately
-// live ONLY here — they are not in the top menu.
+// Shared footer on EVERY page. Primary actions + a meta line. These links
+// (Be a buddy / Admin / Coming / More / Updates / Ideas / To-do) are the primary
+// nav for those pages and deliberately live ONLY here — they are not in the top
+// menu (the top nav is the clean newbie-facing set only).
 function siteFooter() {
   return `<footer class="sitefoot">
   <div class="acts">
     <a class="buddy" href="/volunteer">Be a buddy</a>
     <a class="admin" href="/admin">Admin</a>
+    <a class="admin" href="/coming">Coming</a>
+    <a class="admin" href="/more">More</a>
   </div>
   <div class="meta">
     <span class="ver">Tango Buddy v${esc(VERSION)}</span>
-    <span class="dot">·</span><a href="/lessons">Lessons</a>
-    <span class="dot">·</span><a href="/more">More</a>
     <span class="dot">·</span><a href="/updates">Updates</a>
     <span class="dot">·</span><a href="/ideas">Ideas</a>
     <span class="dot">·</span><a href="/todo">To-do</a>
@@ -392,7 +391,8 @@ function landingScript() {
   function getToken(){try{return localStorage.getItem(LSK);}catch(e){return null;}}
   function setToken(t){try{localStorage.setItem(LSK,t);}catch(e){}}
   function clearToken(){try{localStorage.removeItem(LSK);}catch(e){}}
-  function prettyDate(d){try{var x=new Date(d+'T00:00:00');if(isNaN(x))return d;
+  function prettyDate(d){try{var x=(''+d).indexOf('T')>-1?new Date(d):new Date(d+'T00:00:00');
+    if(isNaN(x))return d;
     return x.toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'});}catch(e){return d;}}
 
   function shareBtnHtml(){
@@ -423,8 +423,12 @@ function landingScript() {
         ? '<span class="pill '+(st==='went'?'matched':'new')+'">'+(st==='went'?'you went':'you are going')+'</span>'
         : '<div class="ctas"><button type="button" class="tb-ci" data-ev="'+esc(ev.id)+'" data-st="going">I\\'m going</button>'
           +'<button type="button" class="tb-ci alt" data-ev="'+esc(ev.id)+'" data-st="went">I went</button></div>';
-      return '<div class="card teacher"><h3>'+esc(ev.title)+'</h3>'
-        +'<div class="studio">'+esc(prettyDate(ev.date))+' · '+esc(ev.time)+' · '+esc(ev.location)+'</div>'
+      var evName=ev.shortName||ev.title||'Tango event';
+      var evWhen=ev.startDate?prettyDate(ev.startDate):(ev.date?prettyDate(ev.date)+(ev.time?' · '+ev.time:''):'');
+      var evWhere=ev.venueName||ev.location||'';
+      var evMeta=[evWhen,evWhere].filter(Boolean).join(' · ');
+      return '<div class="card teacher"><h3>'+esc(evName)+'</h3>'
+        +(evMeta?'<div class="studio">'+esc(evMeta)+'</div>':'')
         +action+'</div>';
     }).join(''):'<div class="card"><p class="empty">No events posted yet — check back soon.</p></div>';
 
@@ -611,65 +615,75 @@ function prettyDate(dateStr) {
   } catch (e) { return dateStr; }
 }
 
+// Friendly date + time for an ISO string (TangoTiempo `startDate`), e.g.
+// "Thu, Jul 9 · 7:00 PM". Falls back to the raw string if unparseable.
+function prettyDateTime(iso) {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+      + ' · ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  } catch (e) { return iso; }
+}
+
 async function eventsPage(flash) {
   const events = await store.listEvents();
-  const teachers = await store.listTeachers();
-  const orgById = Object.fromEntries(teachers.map((t) => [t.id, t]));
-  const newbies = await store.listNewbies();
 
   const thanks = flash === 'checkedin'
     ? `<p class="promise"><b>Got it — see you on the dance floor!</b> Your check-in is saved.
         Your buddy and the community can see where you are dancing.</p>` : '';
 
-  const newbieOptions = newbies.map((n) =>
-    `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join('');
-
+  // Mobile-first event cards. Each card is ONE tap-target that deep-links to the
+  // real TangoTiempo event page (integrate, don't rebuild). Layout per event:
+  //   [icon]  shortName (bold)
+  //           org name
+  //           date · category pill · venue
   const cards = events.length ? events.map((ev) => {
-    const org = ev.organizerId ? orgById[ev.organizerId] : null;
-    const orgLine = org
-      ? `<div class="studio">Hosted by ${esc(org.name)}</div>` : '';
-    // Real events live on TangoTiempo — the whole card's action opens the
-    // TangoTiempo page in a new tab (integrate, don't rebuild).
-    const whenLine = ev.date
-      ? `<div class="studio">${esc(prettyDate(ev.date))} · ${esc(ev.time)} · ${esc(ev.location)}</div>`
-      : `<div class="studio">Details &amp; date on TangoTiempo</div>`;
-    const sourceTag = ev.source
-      ? `<span class="demo-tag">via ${esc(ev.source)}</span>` : '';
-    const linkAction = ev.link
-      ? `<div class="ctas"><a href="${esc(ev.link)}" target="_blank" rel="noopener">View on TangoTiempo →</a></div>`
+    const href = ev.url || ev.link || 'https://tangotiempo.com';
+    const label = ev.shortName || ev.title || 'Tango event';
+    // Icon is external (Azure blob) — reference directly; hide gracefully when
+    // absent (event 685332 has none) or if the URL 404s.
+    const thumb = ev.image
+      ? `<img class="ev-thumb" src="${esc(ev.image)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
       : '';
-    // NO LOGIN check-in: pick your name, choose going/went.
-    const checkin = newbies.length ? `
-      <form class="match-form" method="POST" action="/api/checkin" style="margin-top:12px;flex-wrap:wrap">
-        <input type="hidden" name="eventId" value="${esc(ev.id)}" />
-        <select name="newbieId" required>
-          <option value="" disabled selected>Who are you?</option>
-          ${newbieOptions}
-        </select>
-        <button type="submit" name="status" value="going">I'm going</button>
-        <button type="submit" name="status" value="went" class="alt-btn">I went</button>
-      </form>`
-      : '';
-    return `<div class="card teacher">
-      <h3>${esc(ev.title)} ${typePill(ev.type)}${sourceTag}</h3>
-      ${whenLine}
-      ${orgLine}
-      ${linkAction}
-      ${checkin}
-    </div>`;
+    const orgLine = ev.orgName ? `<div class="ev-org">${esc(ev.orgName)}</div>` : '';
+    const when = ev.startDate
+      ? prettyDateTime(ev.startDate)
+      : (ev.date ? prettyDate(ev.date) + (ev.time ? ' · ' + ev.time : '') : '');
+    const cat = ev.category || ev.type;
+    const meta = `<div class="ev-meta">
+        ${when ? `<span>${esc(when)}</span>` : ''}
+        ${cat ? typePill(cat) : ''}
+        ${(ev.venueName || ev.location) ? `<span>${esc(ev.venueName || ev.location)}</span>` : ''}
+      </div>`;
+    return `<a class="card ev-card" href="${esc(href)}" target="_blank" rel="noopener">
+      ${thumb}
+      <div class="ev-body">
+        <div class="ev-name">${esc(label)}</div>
+        ${orgLine}
+        ${meta}
+      </div>
+    </a>`;
   }).join('') : `<div class="card"><p class="empty">No events posted yet — check back soon.</p></div>`;
 
   return page('Boston Tango Events', `
     <span class="badge">Boston Tango · Events</span>
     <h1>What's <span class="accent">happening near you</span></h1>
     <p class="lede">Milongas, practicas, classes and socials around Boston, connected via TangoTiempo.
-      Find a night that feels right, bring your buddy, and tap through for the details.</p>
+      Find a night that feels right, bring your buddy, and tap a card for the details.</p>
     ${heroBlock()}
     ${thanks}
     ${cards}
     <p class="foot">Tango Buddy · Boston · come dance — the whole city is your milonga.</p>
     <style>
-      .match-form .alt-btn{background:#fff;color:var(--terra-d);border:1.5px solid var(--line)}
+      .ev-card{display:flex;gap:12px;align-items:center;text-decoration:none;color:var(--ink)}
+      .ev-card:active{background:#fff8f2}
+      .ev-thumb{width:64px;height:64px;border-radius:12px;object-fit:cover;flex:0 0 auto;
+        border:1px solid var(--line);background:#fff2e8}
+      .ev-body{flex:1;min-width:0}
+      .ev-name{font-weight:800;font-size:17px;line-height:1.2;margin-bottom:2px}
+      .ev-org{color:var(--terra-d);font-weight:700;font-size:14px;margin-bottom:7px}
+      .ev-meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13px;color:var(--soft)}
     </style>
   `);
 }
@@ -679,7 +693,7 @@ async function eventsPage(flash) {
  * operator login / session check RIGHT HERE (e.g. verify a signed cookie or an
  * auth header) before rendering anything below. */
 
-async function adminPage() {
+async function adminPage(flash) {
   const newbies = await store.listNewbies();
   const volunteers = await store.listVolunteers();
   const volById = Object.fromEntries(volunteers.map((v) => [v.id, v]));
@@ -786,21 +800,30 @@ async function adminPage() {
   }</select>`;
 
   const eventRows = events.length ? events.map((ev) => {
-    const org = ev.organizerId ? orgById[ev.organizerId] : null;
+    const thumb = ev.image
+      ? `<img src="${esc(ev.image)}" alt="" style="width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid var(--line)" onerror="this.style.display='none'" />`
+      : '';
+    // "Refresh from TangoTiempo" — re-pull the stored fields for a TT-sourced event.
+    const refresh = ev.ttId
+      ? `<form class="match-form" method="POST" action="/api/event/refresh" style="margin-top:4px">
+           <input type="hidden" name="eventId" value="${esc(ev.id)}" />
+           <button type="submit">↻ Refresh from TangoTiempo</button>
+         </form>`
+      : '';
     return `<tr>
+      <td style="width:52px">${thumb}</td>
       <td><form class="match-form" method="POST" action="/api/event/update" style="flex-wrap:wrap;gap:4px">
         <input type="hidden" name="eventId" value="${esc(ev.id)}" />
-        <input type="text" name="title" value="${esc(ev.title)}" style="min-width:150px" />
-        <select name="type">${typeOpts(ev.type)}</select>
-        <input type="text" name="date" value="${esc(ev.date)}" placeholder="YYYY-MM-DD" style="width:120px" />
-        <input type="text" name="time" value="${esc(ev.time)}" placeholder="HH:MM" style="width:80px" />
-        <input type="text" name="location" value="${esc(ev.location)}" style="min-width:140px" />
-        ${orgSelect('organizerId', ev.organizerId)}
-        <input type="text" name="link" value="${esc(ev.link)}" placeholder="https://…" style="min-width:150px" />
+        <input type="text" name="shortName" value="${esc(ev.shortName || ev.title)}" placeholder="Short name" style="min-width:150px" />
+        <input type="text" name="orgName" value="${esc(ev.orgName)}" placeholder="Organizer" style="min-width:130px" />
+        <select name="type">${typeOpts(ev.category || ev.type)}</select>
+        <input type="text" name="startDate" value="${esc(ev.startDate)}" placeholder="ISO date" style="min-width:150px" />
+        <input type="text" name="venueName" value="${esc(ev.venueName || ev.location)}" placeholder="Venue" style="min-width:130px" />
+        <input type="text" name="url" value="${esc(ev.url || ev.link)}" placeholder="https://tangotiempo.com/event/…" style="min-width:160px" />
         <button type="submit">Save</button>
-      </form></td>
+      </form>${refresh}</td>
     </tr>`;
-  }).join('') : `<tr><td class="empty">No events yet — add one below.</td></tr>`;
+  }).join('') : `<tr><td class="empty" colspan="2">No events yet — add one below.</td></tr>`;
 
   const organizerRows = organizers.length ? organizers.map((t) => `<tr>
       <td><form class="match-form" method="POST" action="/api/organizer/update" style="flex-wrap:wrap;gap:4px">
@@ -817,16 +840,13 @@ async function adminPage() {
     <div class="card">
       <h3 style="margin:0 0 12px">Events <span class="demo-tag">manage</span></h3>
       <div class="scroll"><table><tbody>${eventRows}</tbody></table></div>
-      <h3 style="margin:16px 0 8px;font-size:15px">Add an event</h3>
-      <form class="match-form" method="POST" action="/api/event" style="flex-wrap:wrap;gap:6px">
-        <input type="text" name="title" placeholder="Title" required style="min-width:150px" />
-        <select name="type">${typeOpts('Milonga')}</select>
-        <input type="text" name="date" placeholder="YYYY-MM-DD" required style="width:130px" />
-        <input type="text" name="time" placeholder="HH:MM" required style="width:90px" />
-        <input type="text" name="location" placeholder="Location" required style="min-width:150px" />
-        ${orgSelect('organizerId', '')}
-        <input type="text" name="link" placeholder="https://… (optional)" style="min-width:160px" />
-        <button type="submit">Add event</button>
+      <h3 style="margin:16px 0 4px;font-size:15px">Add event from TangoTiempo link</h3>
+      <p class="hint" style="margin:0 0 10px">Paste a TangoTiempo event link
+        (<code>https://tangotiempo.com/event/…</code>) or its id — we pull the short name,
+        organizer, date, venue and icon automatically.</p>
+      <form class="match-form" method="POST" action="/api/event/tt" style="flex-wrap:wrap;gap:6px">
+        <input type="text" name="tt" placeholder="TangoTiempo link or event id" required style="min-width:240px;flex:1" />
+        <button type="submit">Add from TangoTiempo</button>
       </form>
     </div>`;
 
@@ -881,11 +901,19 @@ async function adminPage() {
      <td>${esc(volById[n.buddyId].area)}</td></tr>`).join('')
     : `<tr><td colspan="4" class="empty">No pairings yet — assign a buddy above.</td></tr>`;
 
+  const flashBanner = flash === 'ttfail'
+    ? `<p class="promise"><b>Couldn't fetch that TangoTiempo event.</b> Check the link or id and try again.</p>`
+    : flash === 'ttadded'
+      ? `<p class="promise"><b>Event added from TangoTiempo.</b> It is live on <a href="/events">/events</a>.</p>`
+      : flash === 'ttrefreshed'
+        ? `<p class="promise"><b>Refreshed from TangoTiempo.</b> Latest details pulled.</p>` : '';
+
   return page('Tango Buddy — Admin', `
     <span class="badge">Operator Dashboard</span>
     <h1>Tango Buddy <span class="accent">admin</span></h1>
     <p class="lede">${newbies.length} newbie(s) · ${volunteers.length} volunteer(s) · ${pairs.length} pairing(s).
       Local demo — no login.</p>
+    ${flashBanner}
 
     <div class="card">
       <h3 style="margin:0 0 12px">Newbies</h3>
@@ -1275,7 +1303,7 @@ async function requestListener(req, res) {
           });
           return res.end();
         }
-        return send(res, 200, await adminPage());
+        return send(res, 200, await adminPage(url.searchParams.get('flash')));
       }
       if (pathname === '/chat') return send(res, 200, await chatPage({
         id: url.searchParams.get('id'), as: url.searchParams.get('as'),
@@ -1334,6 +1362,7 @@ async function requestListener(req, res) {
       // Admin gate: the /admin-driven POST routes require the passphrase when
       // ADMIN_PASS is set. Newbie/token/chat flows below stay open (no login).
       const ADMIN_POSTS = ['/api/match', '/api/event', '/api/event/update',
+        '/api/event/tt', '/api/event/refresh',
         '/api/organizer', '/api/organizer/update', '/api/studio', '/api/studio/update',
         '/api/ready', '/api/handover'];
       if (ADMIN_POSTS.includes(pathname) && !adminOK(req, url)) {
@@ -1384,6 +1413,22 @@ async function requestListener(req, res) {
       if (pathname === '/api/event/update') {
         await store.updateEvent(body.eventId, body);
         return redirect(res, '/admin');
+      }
+      // Admin: add an event by pasting a TangoTiempo link/id — server pulls the
+      // real fields (shortName / organizer / date / venue / icon) and stores them.
+      if (pathname === '/api/event/tt') {
+        const data = await fetchTangoTiempoEvent(body.tt);
+        if (!data) return redirect(res, '/admin?flash=ttfail');
+        await store.addEvent({ ...data, source: 'TangoTiempo' });
+        return redirect(res, '/admin?flash=ttadded');
+      }
+      // Admin: re-pull a stored TangoTiempo event's fields from the live API.
+      if (pathname === '/api/event/refresh') {
+        const ev = (await store.listEvents()).find((e) => e.id === body.eventId);
+        const data = ev ? await fetchTangoTiempoEvent(ev.ttId || ev.url || ev.link) : null;
+        if (!data) return redirect(res, '/admin?flash=ttfail');
+        await store.updateEvent(body.eventId, data);
+        return redirect(res, '/admin?flash=ttrefreshed');
       }
       if (pathname === '/api/organizer') {
         await store.addOrganizer(body);

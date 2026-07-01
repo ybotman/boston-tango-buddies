@@ -7,6 +7,22 @@ buddy**, and let an operator **hand-match** them — plus a **Lessons** tab of r
 Boston studios, a public **events** listing with **check-in**, and a **studio
 handover** that connects the community layer to the lessons layer.
 
+> **v0.6.0 — TangoTiempo event integration.** Events are now **pulled from
+> TangoTiempo**. A tiny server-side helper `fetchTangoTiempoEvent(idOrUrl)`
+> (`tangotiempo.js`, zero deps — Node 18+ global `fetch`) accepts a full
+> `https://tangotiempo.com/event/<id>` link **or** a bare 24-hex id, calls
+> `GET https://tangotiempo.com/api/events/id/<id>`, and returns a normalized
+> `{ ttId, url, shortName, orgName, title, startDate, venueName, category, image }`
+> (or **`null`** on any bad id / network / non-200 — never throws). The 4 seed
+> events hold **real fetched data** (CAMBRIDGE-Al-Fresco! / Ochos & Pivots /
+> Beginner Class / Beginner %100). The public `/events` cards are **mobile-first**:
+> a rounded **icon** (hidden when absent), the **shortName** (bold) then the
+> **organizer** name, a pretty date + category pill + venue — and the **whole card
+> deep-links to its TangoTiempo page** (`target="_blank"`). In `/admin` an operator
+> **adds an event by pasting a TangoTiempo link/id** (→ `POST /api/event/tt`, auto-
+> pulls all fields) and can **Refresh from TangoTiempo** per event (→ `POST
+> /api/event/refresh`). Event icons are external Azure-blob URLs referenced directly.
+
 > **v0.5.0 — Lessons tab + model split.** A real **Lessons tab** (`/lessons`) now
 > lists 9 real Boston teaching studios as mobile cards with **Call** (`tel:`) and
 > **Website** CTAs. The data model is **split into two collections**: **organizers**
@@ -46,11 +62,11 @@ active store backend (`local JSON` vs `Firestore`).
 | `GET /api/me?token=…` | Returns `{ newbie:{id,name,status}, events:[…], checkins:[…] }` for the with-token home. 404 if the token is unknown (client then clears it and shows the form). |
 | `GET /manifest.webmanifest` | PWA **add-to-home-screen** manifest (name "Boston Tango Buddies", short_name "Tango Buddies", `display:standalone`, warm theme/background, `start_url:"/"`, icons → `/assets/icon.png`). `application/manifest+json`. |
 | `GET /volunteer` | **Volunteer (buddy) capture** — the other side. Name, contact, Boston area, availability, note. → `POST /api/volunteer` |
-| `GET /events`    | **Events** — public "what's happening near you" listing. **v0.4.0:** 4 **real** Boston events that each **deep-link out to their TangoTiempo event page** (each card's "View on TangoTiempo →" opens in a new tab; marked "via TangoTiempo"). **No login check-in** stays available (`POST /api/checkin`). |
+| `GET /events`    | **Events** — public "what's happening near you" listing. **v0.6.0:** 4 **real** TangoTiempo events shown as **mobile-first cards** — a rounded **icon** (hidden when absent, e.g. event 685332), **shortName** (bold) then the **organizer** name, a pretty date + category pill + venue. The **whole card deep-links to its TangoTiempo event page** (`target="_blank"`). Data is pulled via `fetchTangoTiempoEvent` and stored by `store.js`. |
 | `GET /lessons`  | **Lessons tab (v0.5.0)** — the 9 **real** Boston teaching studios (Alla Tango, Blue Tango, Foundry/Roger Wood, Queer Tango Boston, Tango Academy of Boston, Tango Affair, Tango Society of Boston, Tango Spark, Ultimate Tango) as mobile cards. Each card: studio name + a **Call** button (`tel:`, only if a phone exists) + a **Website** button (opens in a new tab, only if a web exists). Warm, money-free intro. This is the **studios/teachers** collection — SEPARATE from the event **organizers**. The newbie "I want lessons" intent (with-token home) links here. |
 | `GET /teachers`  | **302-redirects to `/lessons`** (v0.5.0). Organizers are no longer a public browse page — they live on events and stay manageable in `/admin`. |
 | `GET /more`      | **v0.4.0 — More.** Two warm outbound links (open in a new tab): **Boston Tango Calendar** (bostontangocalendar.com) and **TangoTiempo** (tangotiempo.com, national). Linked from the **footer**. Money-free. |
-| `GET /admin`     | **Operator dashboard** — tables of newbies + volunteers, per-newbie **match** control (→ `POST /api/match`), **origination** column, per-newbie **check-in history** (the retention signal), **"Ready for lessons"** toggle (→ `POST /api/ready`) + **handover to an organizer** (→ `POST /api/handover`), plus **manage events** (add → `POST /api/event`, edit → `POST /api/event/update`) and — as **two clearly separate sections** (v0.5.0) — **Organizers (events)** (add → `POST /api/organizer`, edit → `POST /api/organizer/update`) and **Studios / Teachers (lessons)** (add → `POST /api/studio`, edit → `POST /api/studio/update`), and current pairings. **v0.4.0 — passphrase gate:** when `ADMIN_PASS` is set, `/admin` (+ its POST routes) require the passphrase (via `?pass=…` → cookie); unset (local dev) → open. |
+| `GET /admin`     | **Operator dashboard** — tables of newbies + volunteers, per-newbie **match** control (→ `POST /api/match`), **origination** column, per-newbie **check-in history** (the retention signal), **"Ready for lessons"** toggle (→ `POST /api/ready`) + **handover to an organizer** (→ `POST /api/handover`), plus **manage events** — **v0.6.0: add an event by pasting a TangoTiempo link/id** (→ `POST /api/event/tt`, auto-pulls shortName/org/date/venue/icon; friendly error if the fetch fails), **Refresh from TangoTiempo** per event (→ `POST /api/event/refresh`), and edit rows (→ `POST /api/event/update`) — and — as **two clearly separate sections** (v0.5.0) — **Organizers (events)** (add → `POST /api/organizer`, edit → `POST /api/organizer/update`) and **Studios / Teachers (lessons)** (add → `POST /api/studio`, edit → `POST /api/studio/update`), and current pairings. **v0.4.0 — passphrase gate:** when `ADMIN_PASS` is set, `/admin` (+ its POST routes) require the passphrase (via `?pass=…` → cookie); unset (local dev) → open. |
 | `GET /chat`      | **Buddy ↔ Newbie chat** — private 1:1 thread for a matched pairing. **No login:** a "view as" switch lets you pick a pairing and speak as either the newbie or the buddy. Polls `GET /api/thread?id=…` every ~3s. Posts → `POST /api/chat`. Empty state points you to `/admin` to make a match first. |
 | `GET /social`    | **Rolling Newbies** — one open group feed the whole newbie cohort shares. Pick or free-type a "posting as" name and post. Same ~3s poll. Posts → `POST /api/social`. |
 | `GET /coming`    | **What's Coming** — enticing "coming soon" cards (Buddy Card, Community chat, and preview cards). The **Buddy Card stays preview-only here.** **Features & ideas only — no money language anywhere** (no pricing/payments/revenue/$). |
@@ -59,7 +75,9 @@ active store backend (`local JSON` vs `Firestore`).
 | `GET /todo`      | **To-do — "Upcoming (approved)"** — the next agreed things to build (token device-landing, real organizers, rolling lifecycle demo). **Footer-only page.** Data-driven from `store.listTodos()`. |
 | `GET /api/thread?id=…` | Returns `{ id, messages: [...] }` (oldest-first) for the chat/social pollers. |
 | `POST /api/newbie` | Creates a newbie **and mints a device `token`**. AJAX callers (`Accept: application/json`) get `{ token }`; a plain no-JS POST redirects to `/?flash=thanks`. |
-| `POST /api/checkin` | Check-in. Accepts **either** `newbieId` (the `/events` dropdown) **or** `token` (the with-token home's one-tap). JSON callers get `{ ok:true }`; plain posts redirect to `/events?flash=checkedin`. |
+| `POST /api/checkin` | Check-in. Accepts **either** `newbieId` **or** `token` (the with-token home's one-tap). JSON callers get `{ ok:true }`; plain posts redirect to `/events?flash=checkedin`. |
+| `POST /api/event/tt` | **v0.6.0** (admin-gated). Body `tt` = a TangoTiempo link or id → `fetchTangoTiempoEvent` → stores the event with the pulled fields. Redirects `/admin?flash=ttadded`, or `?flash=ttfail` when the fetch returns `null`. |
+| `POST /api/event/refresh` | **v0.6.0** (admin-gated). Body `eventId` → re-fetches by the stored `ttId`/`url` and updates the record. Redirects `/admin?flash=ttrefreshed`, or `?flash=ttfail` on failure. |
 | `GET /assets/*`  | Static files if present (`hero.png`, `icon.png`, …) — 404s gracefully if missing. |
 
 ### No login — demo "view as" switch
@@ -67,9 +85,11 @@ active store backend (`local JSON` vs `Firestore`).
 There is **no auth anywhere** (by design — this is a local demo Toby clicks around).
 Chat identity is a demo **"view as" selector**: on `/chat` you choose a matched
 pairing and toggle whether you're speaking as the **newbie** or the **buddy**, then
-send. On `/social` you just type (or pick) a "posting as" name. **Event check-in** on
-`/events` is the same idea — pick your name from a dropdown, no login. Messages and
-check-ins persist in `db.json` via `store.js` and appear live where relevant.
+send. On `/social` you just type (or pick) a "posting as" name. **Event check-in**
+(v0.6.0) now lives on the **with-token home** — one-tap "I'm going / I went" against
+the device token (`POST /api/checkin`); the public `/events` cards themselves are
+pure TangoTiempo deep-links. Messages and check-ins persist in `db.json` via
+`store.js` and appear live where relevant.
 Code comments in `app.js` mark exactly where an operator login would gate the
 `/admin`-driven POST endpoints (events, organizers, ready, handover) in production.
 
@@ -84,13 +104,17 @@ payments, payouts, revenue, cost, fees, or "$" — anywhere on the page or in th
 Every page renders one **shared footer** (mobile-first, ~44px+ tap targets, wraps
 cleanly on a narrow phone):
 
-- **Primary actions:** **Be a buddy** (→ `/volunteer`) · **Admin** (→ `/admin`)
-- **Meta line:** **Tango Buddy v0.5.0** · **Lessons** (→ `/lessons`) · **More**
-  (→ `/more`) · **Updates** (→ `/updates`) · **Ideas** (→ `/ideas`) · **To-do**
-  (→ `/todo`)
+- **Primary actions:** **Be a buddy** (→ `/volunteer`) · **Admin** (→ `/admin`) ·
+  **Coming** (→ `/coming`) · **More** (→ `/more`)
+- **Meta line:** **Tango Buddy v0.6.0** · **Updates** (→ `/updates`) · **Ideas**
+  (→ `/ideas`) · **To-do** (→ `/todo`)
 
-The footer's meta links are the **only** way to reach the three meta pages — they
-are deliberately **not in the top menu**. The version string is read once from
+**v0.5.4 — slimmed top nav:** the top navigation is now the clean **newbie-facing**
+set only (**Learn tango** · **Events** · **Lessons** · **Social** · **Chat**).
+**Be a buddy**, **Admin** and **Coming** were removed from the top nav and live
+**footer-only** now (the routes `/volunteer`, `/admin`, `/coming` all still work).
+The footer is the **only** way to reach the meta pages — they are deliberately
+**not in the top menu**. The version string is read once from
 `package.json` at startup (`require('./package.json').version`) — **no dependency**,
 one semver source of truth (bump `package.json` → footer updates).
 
@@ -268,11 +292,12 @@ functions. **Organizers are the same inventory as teachers** — one list, two h
 ```
 poc/
 ├── app.js        # HTTP server + page templates + routes; exports requestListener
+├── tangotiempo.js   # fetchTangoTiempoEvent(idOrUrl) — server-side TangoTiempo pull (v0.6.0, zero deps)
 ├── store.js         # the ONLY data layer — env-gated Firestore / local-JSON (async)
 ├── api/index.js     # Vercel serverless entrypoint (delegates to requestListener)
 ├── vercel.json      # Vercel rewrite → /api/index (assets/favicon excluded) + includeFiles seed
-├── package.json     # v0.5.1; firebase-admin dependency (used only when envs present)
-├── data/db.json     # local JSON store (9 organizers + 9 lesson studios + 4 TangoTiempo events + meta; empty newbies/volunteers/messages/checkins)
+├── package.json     # v0.6.0; firebase-admin dependency (used only when envs present)
+├── data/db.json     # local JSON store (9 organizers + 9 lesson studios + 4 real TangoTiempo events w/ shortName/org/date/venue/icon + meta; empty newbies/volunteers/messages/checkins)
 ├── assets/          # hero.png / icon.png slots (+ README)
 └── README.md        # this file
 ```
@@ -286,8 +311,11 @@ poc/
   TangoTiempo. Contact fields are intentionally blank for now (a "contact coming
   soon" note shows). Toby Balsley and the unresolved "limeo" entry are **held
   out** per plan.
-- **Events are real (v0.4.0):** 4 events that deep-link out to their TangoTiempo
-  event pages (titles/dates TBD; each opens on TangoTiempo in a new tab).
+- **Events are real (v0.6.0):** the 4 seed events hold **real data fetched from
+  TangoTiempo** at build time (shortName, organizer, start date, venue, category,
+  icon). Each `/events` card deep-links to its TangoTiempo page in a new tab.
+  Event `685332` legitimately has **no icon** — the thumbnail is hidden for it.
+  Operators add/refresh events from a TangoTiempo link in `/admin`.
 - Consent is required on the newbie form (browser + kept on the record).
 - Each newbie record now carries a random **`token`** (the no-login device identity);
   the device stores it as `localStorage.tb_token`. Clearing it (or "Not you? Start

@@ -41,7 +41,11 @@
  *   studio    { id, name, phone, web, createdAt }                    (Studios/Teachers — the LESSONS tab)
  *   thread    { id, kind, newbieId, createdAt }   kind: 'buddy' | 'social'
  *   message   { id, threadId, fromName, body, createdAt }
- *   event     { id, title, type, date, time, location, organizerId, link, source, demo, createdAt }
+ *   event     { id, ttId, url, shortName, orgName, startDate, venueName, category, image,
+ *               title, type, date, time, location, organizerId, link, source, demo, createdAt }
+ *               (ttId/url/shortName/orgName/startDate/venueName/category/image are the
+ *                TangoTiempo-pulled fields; title/type/date/time/location remain for
+ *                legacy/manual events + the token-home landing.)
  *   checkin   { id, newbieId, eventId, status, when }   status: 'going' | 'went'
  * ========================================================================== */
 
@@ -340,20 +344,34 @@ async function postMessage(threadId, fromName, body) {
 
 async function listEvents() {
   const all = await backend.all('events');
+  // Sort by whenever the event happens: TangoTiempo events carry an ISO
+  // `startDate`; legacy/manual events carry `date` (+ `time`).
   return all.slice().sort((a, b) =>
-    ((a.date || '') + (a.time || '')).localeCompare((b.date || '') + (b.time || '')));
+    ((a.startDate || a.date || '') + (a.time || ''))
+      .localeCompare((b.startDate || b.date || '') + (b.time || '')));
 }
 
 async function addEvent(data) {
   const event = {
     id: id('e'),
+    // --- TangoTiempo-pulled fields ---
+    ttId: (data.ttId || '').trim() || null,
+    url: (data.url || '').trim(),
+    shortName: (data.shortName || '').trim(),
+    orgName: (data.orgName || '').trim(),
+    startDate: (data.startDate || '').trim(),
+    venueName: (data.venueName || '').trim(),
+    category: (data.category || '').trim(),
+    image: data.image ? String(data.image).trim() : null,
+    // --- legacy / manual fields (also used by the token-home landing) ---
     title: (data.title || '').trim(),
-    type: (data.type || '').trim(),
+    type: (data.type || data.category || '').trim(),
     date: (data.date || '').trim(),
     time: (data.time || '').trim(),
     location: (data.location || '').trim(),
     organizerId: (data.organizerId || '').trim() || null,
-    link: (data.link || '').trim(),
+    // link deep-links to TangoTiempo; default to the pulled url when present.
+    link: (data.link || data.url || '').trim(),
     source: (data.source || '').trim(),
     demo: data.demo === true || data.demo === 'true',
     createdAt: new Date().toISOString(),
@@ -365,10 +383,13 @@ async function addEvent(data) {
 async function updateEvent(eventId, data) {
   const event = await backend.get('events', eventId);
   if (!event) return null;
-  ['title', 'type', 'date', 'time', 'location', 'link'].forEach((k) => {
+  ['title', 'type', 'date', 'time', 'location', 'link',
+    'url', 'shortName', 'orgName', 'startDate', 'venueName', 'category'].forEach((k) => {
     if (data[k] !== undefined) event[k] = String(data[k]).trim();
   });
   if (data.organizerId !== undefined) event.organizerId = String(data.organizerId).trim() || null;
+  if (data.ttId !== undefined) event.ttId = String(data.ttId).trim() || null;
+  if (data.image !== undefined) event.image = data.image ? String(data.image).trim() : null;
   await backend.set('events', event.id, event);
   return event;
 }
