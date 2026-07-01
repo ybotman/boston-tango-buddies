@@ -5,8 +5,12 @@
  * Boston from our own MasterCalendar/TangoTiempo backend (this set already
  * includes the forBeginners events; each occurrence carries BOTH flags so the
  * /events page can split into tiers), expands recurring MASTERS (RRULE strings)
- * into real dated occurrences within a "next 7 days" window, normalizes + sorts
+ * into real dated occurrences within a "next 2 weeks" window, normalizes + sorts
  * them, and caches the result in-memory (~15 min TTL).
+ *
+ * Beginner flags are resolved per-flag OVERRIDE-WINS (consistent with
+ * tangotiempo.js): an *Override field, when present (!= null), beats the base
+ * field; otherwise the base field is used.
  *
  * `rrule` is the ONLY npm dep used here, and ONLY server-side. Node 18+ ships a
  * global `fetch`, so no HTTP client is needed.
@@ -34,11 +38,13 @@ const GEO = { lat: '42.3601', lng: '-71.0589', radius: '50mi' };
 let _cache = null;   // last SUCCESSFUL { events, live, window }
 let _cacheAt = 0;    // Date.now() of that success
 
-// Window = today 00:00 (local) → today + 7 days.
+// Window = today 00:00 (local) → today + 14 days (next 2 weeks). Widened from 7
+// days so upcoming beginner COURSES that start next week (e.g. a Thursday course
+// whose first class is 8 days out) are caught instead of missed.
 function computeWindow() {
   const now = new Date();
   const windowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const windowEnd = new Date(windowStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const windowEnd = new Date(windowStart.getTime() + 14 * 24 * 60 * 60 * 1000);
   return { windowStart, windowEnd };
 }
 
@@ -100,6 +106,17 @@ function expandOccurrences(ev, windowStart, windowEnd) {
   return out;
 }
 
+// Loosely coerce an API flag to boolean (handles true / "true" / 1 / "1").
+function truthy(v) { return v === true || v === 'true' || v === 1 || v === '1'; }
+
+// Resolve a single beginner flag PER-FLAG OVERRIDE-WINS (consistent with
+// tangotiempo.js): if the override field is present (!= null), it decides;
+// otherwise fall back to the base field. So the feed is correct whether or not
+// the API bakes overrides into the base fields.
+function effectiveFlag(base, override) {
+  return override != null ? truthy(override) : truthy(base);
+}
+
 // Normalize one occurrence to the shape the /events page + /api/events-live use.
 function normalize(ev, occDate) {
   const id = ev._id || '';
@@ -112,8 +129,10 @@ function normalize(ev, occDate) {
     venueName: ev.venueName || '',
     category: ev.categoryFirst || '',
     image: ev.eventImage || ev.featuredImage || ev.fallbackImageUrl || null,
-    forBeginners: ev.forBeginners === true || ev.forBeginners === 'true',
-    beginnerFriendly: ev.beginnerFriendly === true || ev.beginnerFriendly === 'true',
+    // Store the EFFECTIVE booleans (override-wins) — these drive the /events
+    // tier split.
+    forBeginners: effectiveFlag(ev.forBeginners, ev.forBeginnersOverride),
+    beginnerFriendly: effectiveFlag(ev.beginnerFriendly, ev.beginnerFriendlyOverride),
   };
 }
 

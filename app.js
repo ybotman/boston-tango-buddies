@@ -760,7 +760,7 @@ async function lessonsPage() {
 }
 
 /* ---------- page: public events listing (GET /events) ----------------------- */
-/* v0.8.1 — a LIVE feed of beginner nights for the NEXT 7 DAYS, pulled server-side
+/* v0.8.1 — a LIVE feed of beginner nights for the NEXT 2 WEEKS, pulled server-side
  * from the MasterCalendar/TangoTiempo API (beginnerFriendly=true SUPERSET, near
  * Boston), with recurring MASTERS expanded (RRULE) into real dated occurrences.
  * ONE fetch, split by flag into THREE tiers: (1) "For beginners" forBeginners,
@@ -835,7 +835,7 @@ function eventCardHtml(ev) {
 }
 
 async function eventsPage(flash) {
-  // LIVE FEED FIRST: pull the next-7-days beginnerFriendly SUPERSET from the
+  // LIVE FEED FIRST: pull the next-2-weeks beginnerFriendly SUPERSET from the
   // MasterCalendar API (server-side, cached, RRULE-expanded). One fetch, then
   // SPLIT BY FLAG into two tiers. If it comes back empty or not-live, fall back
   // to the stored seed events (the current 4) so the page never blanks.
@@ -870,7 +870,7 @@ async function eventsPage(flash) {
   if (usingFallback) {
     const cards = fallbackItems.length
       ? fallbackItems.map(eventCardHtml).join('')
-      : `<div class="card"><p class="empty">No beginner nights in the next 7 days — check back soon.</p></div>`;
+      : `<div class="card"><p class="empty">No beginner nights in the next 2 weeks — check back soon.</p></div>`;
     tiersHtml = `
       <p class="hint" style="margin:0 0 14px">showing saved picks</p>
       <h2 class="tier-h">Beginner nights</h2>
@@ -901,7 +901,7 @@ async function eventsPage(flash) {
 
   return page('Boston Tango Events', `
     <span class="badge">Boston Tango · Events</span>
-    <h1>Beginner nights — <span class="accent">next 7 days</span></h1>
+    <h1>Beginner nights — <span class="accent">next 2 weeks</span></h1>
     <p class="lede">Events made for newcomers, near Boston. Come as you are.</p>
     ${heroBlock()}
     ${thanks}
@@ -1556,7 +1556,7 @@ async function requestListener(req, res) {
         const id = url.searchParams.get('id');
         return sendJson(res, 200, { id, messages: id ? await store.listMessages(id) : [] });
       }
-      // v0.8.1: LIVE feed of the beginnerFriendly SUPERSET (next 7 days) from the
+      // v0.8.1: LIVE feed of the beginnerFriendly SUPERSET (next 2 weeks) from the
       // MasterCalendar API, RRULE-expanded + cached (~15 min); each occurrence
       // carries BOTH forBeginners + beginnerFriendly flags so /events can split
       // into tiers. Never throws — returns { events:[], live:false } on ANY

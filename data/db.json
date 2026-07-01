@@ -2,6 +2,10 @@
   "meta": {
     "updates": [
       {
+        "version": "0.8.3",
+        "note": "Events window widened to next 2 weeks (catches upcoming beginner courses); live feed now honors forBeginners/beginnerFriendly overrides."
+      },
+      {
         "version": "0.8.2",
         "note": "Lessons restyled as a printed directory: alphabetical, bold names, fine-print contact, hairline separators (no buttons)."
       },

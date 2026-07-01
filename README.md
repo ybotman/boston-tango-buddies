@@ -7,6 +7,19 @@ buddy**, and let an operator **hand-match** them — plus a **Lessons** tab of r
 Boston studios, a public **events** listing with **check-in**, and a **studio
 handover** that connects the community layer to the lessons layer.
 
+> **v0.8.3 — events window widened to the NEXT 2 WEEKS + live feed honors overrides
+> (mobile-first, no login).** `eventsLive.js`'s window is now **today 00:00 → +14 days**
+> (was +7); this catches upcoming beginner **courses** whose first class is more than a
+> week out (e.g. a Thursday beginner course starting 8 days out that was previously
+> missed). Everything else about the fetch / pagination / RRULE expansion / ~15-min cache
+> is unchanged. The `/events` heading now reads "**Beginner nights — next 2 weeks**".
+> Additionally, `eventsLive.js` normalize now resolves the beginner flags **per-flag
+> override-wins** (consistent with `tangotiempo.js`): effective `forBeginners` =
+> `forBeginnersOverride != null ? truthy(forBeginnersOverride) : truthy(forBeginners)`,
+> and likewise for `beginnerFriendly` — so the tier split is correct whether or not the
+> API bakes overrides into the base fields (a `truthy()` helper counts `true` / `'true'`
+> / `1`). No new dependencies.
+
 > **v0.8.2 — `/lessons` restyled as a PRINTED DIRECTORY CARD (mobile-first, no
 > login).** The Lessons tab drops the Call/Website **buttons** and now reads like a
 > printed "Beginner Lessons" bookmark: studios listed **alphabetically** (case-
@@ -152,7 +165,7 @@ active store backend (`local JSON` vs `Firestore`).
 | `GET /api/me?token=…` | Returns `{ newbie:{id,name,status}, events:[…], checkins:[…] }` for the with-token home. 404 if the token is unknown (client then clears it and shows the form). |
 | `GET /manifest.webmanifest` | PWA **add-to-home-screen** manifest (name "Boston Tango Buddies", short_name "Tango Buddies", `display:standalone`, warm theme/background, `start_url:"/"`, icons → `/assets/icon.png`). `application/manifest+json`. |
 | `GET /volunteer` | **Volunteer (buddy) capture** — the other side. Name, contact, Boston area, availability, note. → `POST /api/volunteer` |
-| `GET /events`    | **Events — LIVE 3-tier beginner feed, next 7 days (v0.8.1).** Server-renders from **one** `beginnerFriendly=true` SUPERSET fetch (today 00:00 → +7 days, near Boston, all pages) via `eventsLive.js` — masters **RRULE-expanded** (`rrule` dep), one-offs if in-window, cached ~15 min — then **split by flag** into **Tier 1 "For beginners"** (`forBeginners`) and **Tier 2 "Feeling a bit more adventurous?"** (`beginnerFriendly` minus `forBeginners`); **empty tiers hide their heading**. Mobile-first cards (`eventCardHtml`): **icon** (hidden when absent), **shortName** (bold) then **organizer**, occurrence date/day + category pill + venue; **whole card deep-links to `tangotiempo.com/event/<id>`** (`target="_blank"`). **Fallback:** both tiers empty / `live:false` → stored seed (`store.listEvents()`) under a single "Beginner nights" heading + "showing saved picks" note. **Tier 3 "Even more"** block links **tangotiempo.com** (new tab) + emphasizes **"ask your buddy."** |
+| `GET /events`    | **Events — LIVE 3-tier beginner feed, next 2 weeks (v0.8.3; 3-tier since v0.8.1).** Server-renders from **one** `beginnerFriendly=true` SUPERSET fetch (today 00:00 → +14 days, near Boston, all pages) via `eventsLive.js` — masters **RRULE-expanded** (`rrule` dep), one-offs if in-window, cached ~15 min — then **split by flag** into **Tier 1 "For beginners"** (`forBeginners`) and **Tier 2 "Feeling a bit more adventurous?"** (`beginnerFriendly` minus `forBeginners`); **empty tiers hide their heading**. Mobile-first cards (`eventCardHtml`): **icon** (hidden when absent), **shortName** (bold) then **organizer**, occurrence date/day + category pill + venue; **whole card deep-links to `tangotiempo.com/event/<id>`** (`target="_blank"`). **Fallback:** both tiers empty / `live:false` → stored seed (`store.listEvents()`) under a single "Beginner nights" heading + "showing saved picks" note. **Tier 3 "Even more"** block links **tangotiempo.com** (new tab) + emphasizes **"ask your buddy."** |
 | `GET /lessons`  | **Lessons tab (v0.8.2 — printed directory restyle)** — the 9 **real** Boston teaching studios (Alla Tango, Blue Tango, Foundry/Roger Wood, Queer Tango Boston, Tango Academy of Boston, Tango Affair, Tango Society of Boston, Tango Spark, Ultimate Tango) rendered as a **printed "Beginner Lessons" card**, listed **alphabetically**. Each entry is a printed line: **studio name in bold warm terracotta** + small muted **fine-print** contact below (`phone · website`), separated by a **hairline rule**. **No buttons** — the phone is a subtle `tel:` link and the website a subtle plain link (bare domain), so mobile tap-to-call still works but it reads as print. Absent phone/web pieces are omitted. Warm, money-free intro. This is the **studios/teachers** collection — SEPARATE from the event **organizers**. The newbie "I want lessons" intent (with-token home) links here. |
 | `GET /teachers`  | **302-redirects to `/lessons`** (v0.5.0). Organizers are no longer a public browse page — they live on events and stay manageable in `/admin`. |
 | `GET /more`      | **v0.4.0 — More.** Two warm outbound links (open in a new tab): **Boston Tango Calendar** (bostontangocalendar.com) and **TangoTiempo** (tangotiempo.com, national). Linked from the **footer**. Money-free. |
@@ -164,7 +177,7 @@ active store backend (`local JSON` vs `Firestore`).
 | `GET /ideas`     | **Ideas — "What's possible"** — where we collect ideas/possibilities for where Tango Buddy could go (Buddy Card, community network, rolling lifecycle, organizer↔community chat, multi-city, deeper TangoTiempo link). **Features/ideas only — no money language.** **Footer-only page.** Data-driven from `store.listIdeas()`. |
 | `GET /todo`      | **To-do — "Upcoming (approved)"** — the next agreed things to build (token device-landing, real organizers, rolling lifecycle demo). **Footer-only page.** Data-driven from `store.listTodos()`. |
 | `GET /api/thread?id=…` | Returns `{ id, messages: [...] }` (oldest-first) for the chat/social pollers. |
-| `GET /api/events-live` | **v0.8.1.** Server-side LIVE beginner-event feed. Fetches **all pages** of the `beginnerFriendly=true` SUPERSET (includes the `forBeginners` events; each occurrence carries **both** flags) near Boston from `calendarbeaf-prod.azurewebsites.net/api/events` for the **next-7-days** window, **RRULE-expands** recurring masters (`rrule`) into dated occurrences (one-offs included if in-window), normalizes + sorts ascending, and **caches ~15 min**. Success → `{ events:[…], live:true, window:{start,end} }`; **any failure → `{ events:[], live:false }`** (never throws). |
+| `GET /api/events-live` | **v0.8.3 (since v0.8.1).** Server-side LIVE beginner-event feed. Fetches **all pages** of the `beginnerFriendly=true` SUPERSET (includes the `forBeginners` events; each occurrence carries **both** flags, resolved **per-flag override-wins**) near Boston from `calendarbeaf-prod.azurewebsites.net/api/events` for the **next-2-weeks** window (today 00:00 → +14 days), **RRULE-expands** recurring masters (`rrule`) into dated occurrences (one-offs included if in-window), normalizes + sorts ascending, and **caches ~15 min**. Success → `{ events:[…], live:true, window:{start,end} }`; **any failure → `{ events:[], live:false }`** (never throws). |
 | `POST /api/newbie` | Creates a newbie **and mints a device `token`**. AJAX callers (`Accept: application/json`) get `{ token }`; a plain no-JS POST redirects to `/?flash=thanks`. |
 | `POST /api/checkin` | Check-in. Accepts **either** `newbieId` **or** `token` (the with-token home's one-tap). JSON callers get `{ ok:true }`; plain posts redirect to `/events?flash=checkedin`. |
 | `POST /api/event/tt` | **v0.6.0** (admin-gated). Body `tt` = a TangoTiempo link or id → `fetchTangoTiempoEvent` → stores the event with the pulled fields. Redirects `/admin?flash=ttadded`, or `?flash=ttfail` when the fetch returns `null`. |
@@ -396,11 +409,11 @@ functions. **Organizers are the same inventory as teachers** — one list, two h
 poc/
 ├── app.js        # HTTP server + page templates + routes; exports requestListener
 ├── tangotiempo.js   # fetchTangoTiempoEvent(idOrUrl) — server-side TangoTiempo pull (v0.6.0, zero deps)
-├── eventsLive.js    # v0.8.1 LIVE feed: getLiveEvents() — fetch beginnerFriendly SUPERSET (both flags kept) + RRULE-expand (rrule) + 15-min cache + fallback
+├── eventsLive.js    # v0.8.3 LIVE feed: getLiveEvents() — fetch beginnerFriendly SUPERSET (both flags kept, per-flag override-wins) + RRULE-expand (rrule) + next-2-weeks (+14d) window + 15-min cache + fallback
 ├── store.js         # the ONLY data layer — env-gated Firestore / local-JSON (async)
 ├── api/index.js     # Vercel serverless entrypoint (delegates to requestListener)
 ├── vercel.json      # Vercel rewrite → /api/index (assets/favicon excluded) + includeFiles seed
-├── package.json     # v0.8.1; firebase-admin + rrule dependencies
+├── package.json     # v0.8.3; firebase-admin + rrule dependencies
 ├── data/db.json     # local JSON store (9 organizers + 9 lesson studios + 4 real TangoTiempo events w/ shortName/org/date/venue/icon + beginnerFriendly:true + meta; empty newbies/volunteers/messages/checkins)
 ├── assets/          # hero.png / icon.png slots (+ README)
 └── README.md        # this file
