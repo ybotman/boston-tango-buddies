@@ -1,0 +1,315 @@
+{
+  "meta": {
+    "updates": [
+      {
+        "version": "0.5.0",
+        "note": "Lessons tab (real Boston studios) + organizers/teachers model split."
+      },
+      {
+        "version": "0.4.0",
+        "note": "Real Boston organizers + TangoTiempo events, More page, Vercel + Firestore-ready (env-gated store)."
+      },
+      {
+        "version": "0.3.0",
+        "note": "Token device-landing, thank-you screen, Bring-a-buddy share, social meta/OG + favicon, add-to-home-screen (PWA)."
+      },
+      {
+        "version": "0.2.0",
+        "note": "Footer on every page + Updates / Ideas / To-do pages + a mobile-first pass across the whole app + a fresh welcome banner."
+      },
+      {
+        "version": "0.1.1",
+        "note": "Events listing, no-login Check-in, Studio handover to a teacher, and Origination (how newcomers found us)."
+      },
+      {
+        "version": "0.1.0",
+        "note": "Buddy ↔ Newbie private chat, the Rolling Newbies social feed, and the What's Coming preview."
+      },
+      {
+        "version": "0.0.x",
+        "note": "Newbie capture, Admin hand-match, and the organizers / teachers inventory."
+      }
+    ],
+    "ideas": [
+      {
+        "title": "The Buddy Card",
+        "note": "One little tango identity that travels with you — from your first lesson to your hundredth milonga, carried in one place."
+      },
+      {
+        "title": "Community network",
+        "note": "Weave newcomers, buddies and organizers into one warm, connected Boston tango community."
+      },
+      {
+        "title": "Rolling participation lifecycle",
+        "note": "Follow the whole journey — curious newcomer → dancing regular → buddy for the next newcomer — and keep it rolling."
+      },
+      {
+        "title": "Organizer ↔ community chat",
+        "note": "A friendly room where hosts and dancers talk directly — ask the locals anything before you even arrive."
+      },
+      {
+        "title": "Multi-city",
+        "note": "The same warm on-ramp beyond Boston — a buddy waiting wherever tango is danced."
+      },
+      {
+        "title": "Deeper TangoTiempo connection",
+        "note": "Link the community layer to the wider TangoTiempo world so events and people flow together."
+      }
+    ],
+    "todos": [
+      {
+        "title": "Token device-landing",
+        "note": "A returning visitor's device remembers them and lands on their events / check-in home instead of the sign-up."
+      },
+      {
+        "title": "Real organizers",
+        "note": "Swap the demo placeholders for real Boston teachers and organizers — details coming from Toby."
+      },
+      {
+        "title": "Rolling lifecycle demo",
+        "note": "A worked demo of the rolling participation lifecycle end to end."
+      }
+    ]
+  },
+  "newbies": [],
+  "volunteers": [],
+  "threads": [
+    {
+      "id": "thread_social",
+      "kind": "social",
+      "newbieId": null,
+      "createdAt": "2026-07-01T17:25:29.940Z"
+    }
+  ],
+  "messages": [],
+  "checkins": [],
+  "events": [
+    {
+      "id": "e1",
+      "title": "Boston Tango Event 1",
+      "type": "Milonga",
+      "date": "",
+      "time": "",
+      "location": "",
+      "organizerId": null,
+      "link": "https://tangotiempo.com/event/6a1883797cb1491a22db39b1",
+      "source": "TangoTiempo",
+      "demo": false,
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "e2",
+      "title": "Boston Tango Event 2",
+      "type": "Practica",
+      "date": "",
+      "time": "",
+      "location": "",
+      "organizerId": null,
+      "link": "https://tangotiempo.com/event/6a315655bebead338cfa9064",
+      "source": "TangoTiempo",
+      "demo": false,
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "e3",
+      "title": "Boston Tango Event 3",
+      "type": "Class",
+      "date": "",
+      "time": "",
+      "location": "",
+      "organizerId": null,
+      "link": "https://tangotiempo.com/event/68533227a1e3cfb6f8bbb117",
+      "source": "TangoTiempo",
+      "demo": false,
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "e4",
+      "title": "Boston Tango Event 4",
+      "type": "Social",
+      "date": "",
+      "time": "",
+      "location": "",
+      "organizerId": null,
+      "link": "https://tangotiempo.com/event/69c431cb450fa27d289e5087",
+      "source": "TangoTiempo",
+      "demo": false,
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    }
+  ],
+  "teachers": [
+    {
+      "id": "t1",
+      "name": "Tango Society of Boston",
+      "studio": "SOCIETY",
+      "code": "SOCIETY",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    },
+    {
+      "id": "t2",
+      "name": "Tango Practica Corazon",
+      "studio": "CORAZON",
+      "code": "CORAZON",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    },
+    {
+      "id": "t3",
+      "name": "Hsueh-tze Lee",
+      "studio": "HSUEH-TZE",
+      "code": "HSUEH-TZE",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    },
+    {
+      "id": "t4",
+      "name": "Laura Grandi",
+      "studio": "LAURAG",
+      "code": "LAURAG",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    },
+    {
+      "id": "t5",
+      "name": "Milton Azevedo",
+      "studio": "MILT-CORI",
+      "code": "MILT-CORI",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    },
+    {
+      "id": "t6",
+      "name": "Andi Babbs",
+      "studio": "ANDI",
+      "code": "ANDI",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    },
+    {
+      "id": "t7",
+      "name": "Alexander Prokhorov",
+      "studio": "ALEX",
+      "code": "ALEX",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    },
+    {
+      "id": "t8",
+      "name": "Roger Wood",
+      "studio": "",
+      "code": "",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    },
+    {
+      "id": "t9",
+      "name": "Ultimate Tango",
+      "studio": "ULTIMATE",
+      "code": "ULTIMATE",
+      "blurb": "Boston tango organizer · via TangoTiempo.",
+      "email": "",
+      "phone": "",
+      "whatsapp": "",
+      "web": "",
+      "demo": false
+    }
+  ],
+  "studios": [
+    {
+      "id": "s1",
+      "name": "Alla Tango",
+      "phone": "",
+      "web": "allastango.com",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "s2",
+      "name": "Blue Tango",
+      "phone": "(617) 393-3772",
+      "web": "bluetango.org",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "s3",
+      "name": "Foundry (Roger Wood)",
+      "phone": "(857) 998-2063",
+      "web": "",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "s4",
+      "name": "Queer Tango Boston",
+      "phone": "",
+      "web": "facebook.com/groups/qtboston",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "s5",
+      "name": "Tango Academy of Boston",
+      "phone": "",
+      "web": "tangoacademyofboston.com",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "s6",
+      "name": "Tango Affair",
+      "phone": "(617) 615-1550",
+      "web": "tangoaffair.com",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "s7",
+      "name": "Tango Society of Boston",
+      "phone": "(617) 699-6246",
+      "web": "bostontango.org",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "s8",
+      "name": "Tango Spark",
+      "phone": "",
+      "web": "tangospark.com",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    },
+    {
+      "id": "s9",
+      "name": "Ultimate Tango",
+      "phone": "(781) 395-9000",
+      "web": "ultimatetango.com",
+      "createdAt": "2026-07-01T12:00:00.000Z"
+    }
+  ]
+}

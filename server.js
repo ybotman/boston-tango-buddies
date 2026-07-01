@@ -1,0 +1,1445 @@
+/* =============================================================================
+ * server.js — Tango Buddy POC (local, free, zero-dependency demo)
+ * =============================================================================
+ * Runs on Node's built-in `http` only. No npm install, no framework, no cloud.
+ *   $ cd poc && node server.js   ->   http://localhost:3000
+ *
+ * All data access goes through store.js (the thin, swappable data layer).
+ * This file never touches db.json directly — see store.js.
+ * ========================================================================== */
+
+'use strict';
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const { URL } = require('url');
+const store = require('./store');
+
+// Version comes straight from package.json (zero-dependency, read once at start).
+const VERSION = require('./package.json').version;
+
+const PORT = process.env.PORT || 3000;
+const ASSETS_DIR = path.join(__dirname, 'assets');
+
+// Admin gate for the public deploy. If ADMIN_PASS is UNSET (local dev), /admin
+// stays wide open. If set, /admin (+ its POST routes) require the passphrase —
+// supplied once via ?pass=… (which drops a cookie) or the cookie thereafter.
+// Newbie/token flows are never gated (no login, by design).
+const ADMIN_PASS = process.env.ADMIN_PASS || '';
+const ADMIN_COOKIE = 'tb_admin';
+
+/* ---------- tiny helpers ---------------------------------------------------- */
+
+// Escape user-supplied text before dropping it into HTML (demo-grade XSS guard).
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function send(res, status, body, type) {
+  res.writeHead(status, { 'Content-Type': type || 'text/html; charset=utf-8' });
+  res.end(body);
+}
+
+function sendJson(res, status, obj) {
+  send(res, status, JSON.stringify(obj), 'application/json; charset=utf-8');
+}
+
+function redirect(res, location) {
+  res.writeHead(302, { Location: location });
+  res.end();
+}
+
+// Parse a urlencoded POST body into an object.
+function parseBody(req) {
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', (c) => {
+      data += c;
+      if (data.length > 1e6) req.destroy(); // guard against runaway payloads
+    });
+    req.on('end', () => {
+      const params = new URLSearchParams(data);
+      const out = {};
+      for (const [k, v] of params) out[k] = v;
+      resolve(out);
+    });
+  });
+}
+
+// Parse the Cookie header into a plain object.
+function parseCookies(req) {
+  const out = {};
+  const raw = req.headers.cookie || '';
+  raw.split(';').forEach((pair) => {
+    const i = pair.indexOf('=');
+    if (i > 0) out[pair.slice(0, i).trim()] = decodeURIComponent(pair.slice(i + 1).trim());
+  });
+  return out;
+}
+
+// Admin auth check. Open when ADMIN_PASS is unset (local dev); otherwise the
+// passphrase must arrive via the cookie or a matching ?pass= query param.
+function adminOK(req, url) {
+  if (!ADMIN_PASS) return true;
+  const c = parseCookies(req);
+  if (c[ADMIN_COOKIE] && c[ADMIN_COOKIE] === ADMIN_PASS) return true;
+  const q = url && url.searchParams ? url.searchParams.get('pass') : null;
+  return !!(q && q === ADMIN_PASS);
+}
+
+/* ---------- shared chrome (warm palette: terracotta/coral + cream + amber) --- */
+
+// One-line social description reused for <meta description> + Open Graph. Kept
+// deliberately money-free (no pricing/payments/$ language) since it renders on
+// every page, including /coming, /events and /ideas.
+const SITE_DESC = 'Boston Tango Buddies — a warm on-ramp for tango newcomers in Boston. '
+  + 'We pair you with a buddy so you never learn alone.';
+
+function page(title, body, opts) {
+  opts = opts || {};
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="robots" content="noindex,nofollow" />
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(SITE_DESC)}" />
+<meta name="theme-color" content="#c85a3c" />
+<!-- Open Graph / social share (image points at the hero; degrades gracefully if absent) -->
+<meta property="og:title" content="Boston Tango Buddies" />
+<meta property="og:description" content="${esc(SITE_DESC)}" />
+<meta property="og:image" content="/assets/hero.png" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Boston Tango Buddies" />
+<!-- Favicon + PWA add-to-home-screen. Both files are optional; server serves 404
+     gracefully and the browser simply skips a missing icon (no error). -->
+<link rel="icon" href="/assets/icon.png" />
+<link rel="apple-touch-icon" href="/assets/icon.png" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<style>
+  :root{
+    --ink:#2a1a12; --terra:#c85a3c; --terra-d:#9e3f27; --coral:#e08767;
+    --cream:#fff6ee; --amber:#e6a642; --soft:#7a5c4a; --line:#efdccb;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:linear-gradient(165deg,#fff6ee 0%,#ffe8d8 100%);
+    color:var(--ink); -webkit-font-smoothing:antialiased;
+    min-height:100dvh; padding:22px 16px calc(30px + env(safe-area-inset-bottom));
+  }
+  .wrap{max-width:${opts.wide ? '960px' : '480px'};margin:0 auto}
+  a{color:var(--terra-d)}
+  .badge{display:inline-block;font-size:13px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--terra);font-weight:700;margin-bottom:10px}
+  h1{font-size:29px;line-height:1.14;margin:0 0 6px;font-weight:800}
+  h1 .accent{color:var(--terra)}
+  .lede{font-size:17px;line-height:1.5;color:var(--soft);margin:0 0 18px}
+  .hero{border-radius:18px;overflow:hidden;margin:0 0 16px;border:1px solid var(--line);
+    /* graceful CSS fallback shown when /assets/hero.png is missing */
+    background:linear-gradient(135deg,var(--coral),var(--amber));
+    min-height:150px;display:flex;align-items:flex-end}
+  .hero img{width:100%;display:block}
+  .hero .fallback{padding:16px 18px;color:#fff;font-weight:800;font-size:20px;
+    text-shadow:0 1px 6px rgba(0,0,0,.25)}
+  .card{background:#fff;border:1px solid var(--line);border-radius:18px;
+    padding:20px 18px;box-shadow:0 10px 30px rgba(158,63,39,.09);margin-bottom:16px}
+  .promise{font-size:14.5px;line-height:1.55;color:var(--soft);
+    background:#fff2e8;border:1px solid #f6dcc9;border-radius:12px;padding:12px 14px;margin:0 0 18px}
+  .promise b{color:var(--ink)}
+  label.fld{display:block;font-weight:700;font-size:14px;margin:16px 0 7px}
+  label.fld:first-of-type{margin-top:0}
+  input[type=text],input[type=email],input[type=tel],select,textarea{
+    width:100%;font-size:17px;padding:13px 14px;border:1.5px solid var(--line);
+    border-radius:12px;background:#fffdfb;color:var(--ink);font-family:inherit}
+  textarea{min-height:70px;resize:vertical}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--terra)}
+  .hint{font-size:12.5px;color:#a98a76;margin:6px 2px 0}
+  .consent{display:flex;gap:10px;align-items:flex-start;margin-top:18px;
+    background:#fff2e8;border:1px solid #f6dcc9;border-radius:12px;padding:12px 14px}
+  .consent input{margin-top:3px;width:20px;height:20px;flex:0 0 auto}
+  .consent label{font-size:14px;line-height:1.45;color:var(--ink);font-weight:600}
+  .submit{width:100%;font-size:18px;font-weight:800;color:#fff;background:var(--terra);
+    border:none;border-radius:14px;padding:16px;margin-top:20px;cursor:pointer}
+  .submit:active{background:var(--terra-d)}
+  .foot{text-align:center;color:#b89a86;font-size:12.5px;margin-top:18px;line-height:1.5}
+  .nav{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin:2px 0 18px;font-size:14px}
+  .nav a{font-weight:700;text-decoration:none}
+  .big{font-size:46px;line-height:1;margin:0 0 12px;text-align:center}
+  /* teacher cards */
+  .teacher h3{margin:0 0 4px;font-size:18px}
+  .teacher .studio{color:var(--terra-d);font-weight:700;font-size:14px;margin:0 0 8px}
+  .teacher p{color:var(--soft);font-size:14.5px;line-height:1.5;margin:0 0 12px}
+  .ctas{display:flex;gap:8px;flex-wrap:wrap}
+  .ctas a{flex:1;min-width:120px;text-align:center;text-decoration:none;font-weight:700;
+    font-size:14px;padding:11px 8px;border-radius:11px;background:var(--terra);color:#fff}
+  .ctas a.alt{background:#fff;color:var(--terra-d);border:1.5px solid var(--line)}
+  .ctas button{flex:1;min-width:120px;min-height:44px;text-align:center;font-weight:700;
+    font-size:14px;padding:11px 8px;border-radius:11px;background:var(--terra);color:#fff;
+    border:none;cursor:pointer;font-family:inherit}
+  .ctas button:active{background:var(--terra-d)}
+  .ctas button.alt{background:#fff;color:var(--terra-d);border:1.5px solid var(--line)}
+  .quiet{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin:6px 0 4px;font-size:14px}
+  .quiet a{font-weight:700;text-decoration:none}
+  .demo-tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:#9e3f27;background:#ffe3d0;border-radius:6px;padding:2px 7px;margin-left:6px}
+  /* admin tables */
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--soft);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+  .pill{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:20px}
+  .pill.new{background:#ffe3d0;color:#9e3f27}
+  .pill.matched{background:#dff0dc;color:#2f6b2a}
+  .pill.no{background:#f3e0e0;color:#a02c2c}
+  .pill.yes{background:#dff0dc;color:#2f6b2a}
+  .match-form{display:flex;gap:6px}
+  .match-form select{padding:8px;font-size:13px}
+  .match-form button{background:var(--terra);color:#fff;border:none;border-radius:9px;
+    padding:8px 12px;font-weight:700;cursor:pointer;font-size:13px}
+  .empty{color:#a98a76;font-style:italic;padding:14px 4px}
+  .scroll{overflow-x:auto}
+  /* chat / social */
+  .thread{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;
+    max-height:52vh;overflow-y:auto;padding:4px 2px}
+  .msg{max-width:82%;padding:9px 13px;border-radius:15px;font-size:15px;line-height:1.4;
+    background:#fff2e8;border:1px solid #f6dcc9;align-self:flex-start}
+  .msg.me{align-self:flex-end;background:var(--terra);color:#fff;border-color:var(--terra-d)}
+  .msg .who{display:block;font-size:11.5px;font-weight:700;letter-spacing:.03em;
+    opacity:.75;margin-bottom:2px}
+  .msg .when{display:block;font-size:10.5px;opacity:.6;margin-top:3px}
+  .composer{display:flex;gap:8px;margin-top:14px}
+  .composer input[type=text]{flex:1}
+  .composer button{background:var(--terra);color:#fff;border:none;border-radius:12px;
+    padding:0 18px;font-weight:800;font-size:16px;cursor:pointer}
+  .composer button:active{background:var(--terra-d)}
+  .switcher{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:6px}
+  .switcher > div{flex:1;min-width:140px}
+  .seg{display:inline-flex;border:1.5px solid var(--line);border-radius:11px;overflow:hidden}
+  .seg a{padding:9px 14px;text-decoration:none;font-weight:700;font-size:14px;color:var(--terra-d);background:#fff}
+  .seg a.on{background:var(--terra);color:#fff}
+  /* coming-soon cards */
+  .soon{border:1px solid var(--line);border-radius:16px;padding:18px;background:#fff;margin-bottom:14px;
+    box-shadow:0 8px 22px rgba(158,63,39,.07)}
+  .soon .ico{font-size:30px;line-height:1;margin-bottom:8px}
+  .soon h3{margin:0 0 6px;font-size:19px}
+  .soon p{margin:0;color:var(--soft);font-size:14.5px;line-height:1.5}
+  .soon .tease{display:inline-block;margin-top:10px;font-size:11.5px;font-weight:700;
+    letter-spacing:.08em;text-transform:uppercase;color:var(--terra);background:#ffe3d0;
+    border-radius:20px;padding:3px 11px}
+  /* shared site footer (primary nav — mobile-first, big tap targets) */
+  .sitefoot{margin-top:26px;border-top:1px solid var(--line);padding-top:18px}
+  .sitefoot .acts{display:flex;gap:12px;flex-wrap:wrap}
+  .sitefoot .acts a{flex:1 1 46%;min-width:150px;min-height:48px;display:flex;
+    align-items:center;justify-content:center;text-align:center;text-decoration:none;
+    font-weight:800;font-size:16px;border-radius:14px;padding:13px 14px}
+  .sitefoot .acts a.buddy{background:var(--terra);color:#fff}
+  .sitefoot .acts a.buddy:active{background:var(--terra-d)}
+  .sitefoot .acts a.admin{background:#fff;color:var(--terra-d);border:1.5px solid var(--line)}
+  .sitefoot .meta{display:flex;gap:8px 14px;flex-wrap:wrap;align-items:center;
+    justify-content:center;margin-top:16px;font-size:14px;color:var(--soft)}
+  .sitefoot .meta .ver{font-weight:800;color:var(--terra-d)}
+  .sitefoot .meta a{min-height:44px;display:inline-flex;align-items:center;
+    padding:6px 6px;font-weight:700;text-decoration:none;color:var(--terra-d)}
+  .sitefoot .meta .dot{color:var(--line)}
+  @media(max-width:600px){.grid{grid-template-columns:1fr!important}}
+</style>
+</head>
+<body><div class="wrap">
+<div class="nav">
+  <a href="/">Learn tango</a>
+  <a href="/volunteer">Be a buddy</a>
+  <a href="/events">Events</a>
+  <a href="/chat">Chat</a>
+  <a href="/social">Social</a>
+  <a href="/coming">What's Coming</a>
+  <a href="/lessons">Lessons</a>
+  <a href="/admin">Admin</a>
+</div>
+${body}
+${siteFooter()}
+</div></body></html>`;
+}
+
+// Shared footer on EVERY page. Primary actions + a meta line. These meta links
+// (Updates / Ideas / To-do) are the primary nav for those pages and deliberately
+// live ONLY here — they are not in the top menu.
+function siteFooter() {
+  return `<footer class="sitefoot">
+  <div class="acts">
+    <a class="buddy" href="/volunteer">Be a buddy</a>
+    <a class="admin" href="/admin">Admin</a>
+  </div>
+  <div class="meta">
+    <span class="ver">Tango Buddy v${esc(VERSION)}</span>
+    <span class="dot">·</span><a href="/lessons">Lessons</a>
+    <span class="dot">·</span><a href="/more">More</a>
+    <span class="dot">·</span><a href="/updates">Updates</a>
+    <span class="dot">·</span><a href="/ideas">Ideas</a>
+    <span class="dot">·</span><a href="/todo">To-do</a>
+  </div>
+</footer>`;
+}
+
+// Hero block: <img> that hides itself if /assets/hero.png is missing, revealing
+// the gradient + text fallback underneath (onerror handler, no server check).
+function heroBlock() {
+  return `<div class="hero">
+    <img src="/assets/hero.png" alt="Boston tango" onerror="this.style.display='none'" />
+    <div class="fallback">Boston Tango · come dance with us</div>
+  </div>`;
+}
+
+/* ---------- page: newbie capture (GET /) ------------------------------------ */
+
+function newbiePage(flash) {
+  const platforms = ['Instagram', 'Facebook', 'WhatsApp', 'Phone', 'Email', 'Other'];
+  const options = platforms.map((p) => `<option value="${p}">${p}</option>`).join('');
+  // Server-rendered thank-you ONLY for the no-JS fallback (a plain POST redirects
+  // here with ?flash=thanks). With JS, the client shows its own thank-you screen
+  // and then the with-token home — see landingScript() below.
+  const thanks = flash === 'thanks'
+    ? `<div class="card" style="text-align:center">
+         <div class="big">💃🕺</div>
+         <h1>You are in!</h1>
+         <p class="lede" style="margin-bottom:0">We'll pair you with a buddy and set up your
+         <b>free first lesson</b>. Keep this on your phone — next time you visit, you'll see
+         what's happening.</p>
+       </div>` : '';
+  // Three client-swapped regions live inside one URL ("/"). Default = the capture
+  // form (#tb-capture). If the device already has a tb_token, the client hides the
+  // form and renders the with-token home (#tb-home). Right after a fresh sign-up it
+  // shows the thank-you (#tb-thanks) first. All progressive-enhancement: no JS still
+  // works via the plain form POST + server ?flash=thanks card above.
+  return page('Boston Tango Buddies', `
+    <div id="tb-capture">
+      <span class="badge">Boston Tango</span>
+      <h1>Thanks for scanning. <span class="accent">Want to learn tango?</span></h1>
+      <p class="lede">We will set you up with a <b>free first lesson</b> and a <b>tango buddy</b> —
+        someone to learn beside you.</p>
+      ${heroBlock()}
+      ${thanks}
+      <div class="card">
+        <p class="promise">We are not selling anything. <b>It is all free.</b> We are tango
+          enthusiasts who want you to learn, and we will be your buddy along the way.
+          We just want you to tango.</p>
+        <form method="POST" action="/api/newbie">
+          <label class="fld" for="name">Your name</label>
+          <input id="name" name="name" type="text" autocomplete="name" placeholder="First name is fine" required />
+
+          <label class="fld" for="platform">Best way to reach you</label>
+          <select id="platform" name="platform" required>
+            <option value="" disabled selected>Pick a platform…</option>
+            ${options}
+          </select>
+
+          <label class="fld" for="contact">Your handle / number / email</label>
+          <input id="contact" name="contact" type="text" placeholder="e.g. @yourname, 617-555-0123, you@email.com" required />
+          <p class="hint">One is plenty. We will reach out about your free lesson.</p>
+
+          <label class="fld" for="origination">How did you find us?</label>
+          <select id="origination" name="origination">
+            <option value="" disabled selected>Pick one…</option>
+            <option value="QR code">QR code</option>
+            <option value="A friend">A friend</option>
+            <option value="Social media">Social media</option>
+            <option value="An event">An event</option>
+            <option value="Other">Other</option>
+          </select>
+
+          <label class="fld" for="note">Anything you want us to know? <span style="font-weight:500;color:#a98a76">(optional)</span></label>
+          <textarea id="note" name="note" placeholder="Never danced, a little nervous, best evenings, etc."></textarea>
+
+          <div class="consent">
+            <input id="consent" name="consent" type="checkbox" value="on" required />
+            <label for="consent">I'm OK being connected to a local tango buddy.</label>
+          </div>
+
+          <button class="submit" type="submit">Yes — sign me up!</button>
+        </form>
+      </div>
+      <p class="foot">Tango Buddy · Boston · a friendly free invitation, nothing more.</p>
+    </div>
+    <div id="tb-thanks" hidden></div>
+    <div id="tb-home" hidden></div>
+    ${landingScript()}
+  `);
+}
+
+/* Client script for the split landing (Task 2/3/4). No token -> the capture form
+ * (server-rendered, visible by default). Submitting -> AJAX POST /api/newbie ->
+ * store {token} in localStorage(tb_token) -> thank-you -> with-token home (Events
+ * + one-tap check-in via the token, check-in history, quiet links, Bring-a-buddy).
+ * All zero-dependency vanilla JS. */
+function landingScript() {
+  return `<script>
+(function(){
+  var LSK='tb_token';
+  var cap=document.getElementById('tb-capture');
+  var thx=document.getElementById('tb-thanks');
+  var home=document.getElementById('tb-home');
+  var form=cap?cap.querySelector('form'):null;
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function show(el){if(el)el.hidden=false;} function hide(el){if(el)el.hidden=true;}
+  function getToken(){try{return localStorage.getItem(LSK);}catch(e){return null;}}
+  function setToken(t){try{localStorage.setItem(LSK,t);}catch(e){}}
+  function clearToken(){try{localStorage.removeItem(LSK);}catch(e){}}
+  function prettyDate(d){try{var x=new Date(d+'T00:00:00');if(isNaN(x))return d;
+    return x.toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'});}catch(e){return d;}}
+
+  function shareBtnHtml(){
+    return '<button type="button" class="submit" id="tb-share" '+
+      'style="background:#fff;color:var(--terra-d);border:1.5px solid var(--line)">Bring a buddy</button>';
+  }
+  function wireShare(){
+    var b=document.getElementById('tb-share'); if(!b) return;
+    b.addEventListener('click',function(){
+      var url=location.origin+'/';
+      var data={title:'Boston Tango Buddies',
+        text:'Come learn tango with me — Boston Tango Buddies.',url:url};
+      if(navigator.share){navigator.share(data).catch(function(){});return;}
+      function done(){var t=b.textContent;b.textContent='link copied ✓';
+        setTimeout(function(){b.textContent=t;},2000);}
+      if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(url).then(done).catch(function(){prompt('Copy this link:',url);});
+      }else{prompt('Copy this link:',url);}
+    });
+  }
+
+  function renderHome(data){
+    var n=data.newbie||{}, events=data.events||[], checkins=data.checkins||[];
+    var byEvent={}; checkins.forEach(function(c){byEvent[c.eventId]=c.status;});
+    var evHtml=events.length?events.map(function(ev){
+      var st=byEvent[ev.id];
+      var action=st
+        ? '<span class="pill '+(st==='went'?'matched':'new')+'">'+(st==='went'?'you went':'you are going')+'</span>'
+        : '<div class="ctas"><button type="button" class="tb-ci" data-ev="'+esc(ev.id)+'" data-st="going">I\\'m going</button>'
+          +'<button type="button" class="tb-ci alt" data-ev="'+esc(ev.id)+'" data-st="went">I went</button></div>';
+      return '<div class="card teacher"><h3>'+esc(ev.title)+'</h3>'
+        +'<div class="studio">'+esc(prettyDate(ev.date))+' · '+esc(ev.time)+' · '+esc(ev.location)+'</div>'
+        +action+'</div>';
+    }).join(''):'<div class="card"><p class="empty">No events posted yet — check back soon.</p></div>';
+
+    var histHtml=checkins.length
+      ? '<div class="card"><h3 style="margin:0 0 10px">Your check-ins</h3>'
+        +checkins.map(function(c){
+          var ev=events.filter(function(e){return e.id===c.eventId;})[0];
+          return '<div style="margin-bottom:4px"><span class="pill '+(c.status==='went'?'matched':'new')+'">'
+            +(c.status==='went'?'went':'going')+'</span> '+(ev?esc(ev.title):'(event)')+'</div>';
+        }).join('')+'</div>'
+      : '';
+
+    home.innerHTML=
+      '<span class="badge">Boston Tango</span>'
+      +'<h1>Welcome back, <span class="accent">'+esc(n.name||'friend')+'</span></h1>'
+      +'<p class="lede">Here is what is happening near you. Tap to check in — your phone already knows it is you.</p>'
+      +'<div class="card" style="text-align:center;padding:16px">'+shareBtnHtml()+'</div>'
+      +evHtml
+      +histHtml
+      +'<div class="quiet"><a href="/lessons">Ready for lessons? Find a studio</a>'
+      +'<a href="/chat?id='+encodeURIComponent(n.id||'')+'&as=newbie">Your buddy chat</a>'
+      +'<a href="/social">The Rolling Newbies feed</a></div>'
+      +'<p class="foot"><a href="#" id="tb-reset">Not you? Start over</a></p>';
+
+    Array.prototype.forEach.call(home.querySelectorAll('.tb-ci'),function(btn){
+      btn.addEventListener('click',function(){
+        var token=getToken(); if(!token) return;
+        var b=new URLSearchParams();
+        b.set('token',token); b.set('eventId',btn.getAttribute('data-ev')); b.set('status',btn.getAttribute('data-st'));
+        fetch('/api/checkin',{method:'POST',
+          headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
+          body:b.toString()}).then(function(){loadHome(token);}).catch(function(){});
+      });
+    });
+    var reset=document.getElementById('tb-reset');
+    if(reset)reset.addEventListener('click',function(e){e.preventDefault();clearToken();location.href='/';});
+    wireShare();
+  }
+
+  function loadHome(token){
+    fetch('/api/me?token='+encodeURIComponent(token),{headers:{'Accept':'application/json'}})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        if(!d||!d.newbie){clearToken();hide(thx);hide(home);show(cap);return;}
+        hide(cap);hide(thx);show(home);renderHome(d);
+        try{window.scrollTo(0,0);}catch(e){}
+      }).catch(function(){hide(home);hide(thx);show(cap);});
+  }
+
+  function showThanks(token){
+    hide(cap);hide(home);
+    thx.innerHTML='<span class="badge">Boston Tango</span>'
+      +'<div class="card" style="text-align:center"><div class="big">💃🕺</div>'
+      +'<h1>You\\'re in!</h1>'
+      +'<p class="lede">We\\'ll pair you with a buddy and set up your free first lesson. '
+      +'Keep this on your phone — next time you visit, you\\'ll see what\\'s happening.</p>'
+      +shareBtnHtml()
+      +'<p class="foot" style="margin-top:16px"><a href="#" id="tb-continue">See what\\'s happening →</a></p></div>';
+    show(thx);wireShare();
+    var cont=document.getElementById('tb-continue');
+    if(cont)cont.addEventListener('click',function(e){e.preventDefault();loadHome(token);});
+    try{window.scrollTo(0,0);}catch(e){}
+  }
+
+  if(form){
+    form.addEventListener('submit',function(ev){
+      ev.preventDefault();
+      var body=new URLSearchParams(new FormData(form)).toString();
+      fetch('/api/newbie',{method:'POST',
+        headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
+        body:body})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(d&&d.token){setToken(d.token);showThanks(d.token);}
+          else{location.href='/?flash=thanks';}
+        }).catch(function(){form.submit();});
+    });
+  }
+
+  var tok=getToken();
+  if(tok){loadHome(tok);}
+})();
+</script>`;
+}
+
+/* ---------- page: volunteer capture (GET /volunteer) ------------------------ */
+
+function volunteerPage(flash) {
+  const thanks = flash === 'thanks'
+    ? `<div class="card" style="text-align:center">
+         <div class="big">🌹</div>
+         <h1>Thank you, buddy!</h1>
+         <p class="lede" style="margin-bottom:0">You're on the list. We'll pair you with a newcomer
+         soon and make the intro. Gracias for helping someone find tango.</p>
+       </div>` : '';
+  return page('Be a Tango Buddy — Boston', `
+    <span class="badge">Boston Tango · Volunteers</span>
+    <h1>Help someone <span class="accent">fall for tango.</span></h1>
+    <p class="lede">Buddies are the whole magic. Spend a little time beside a newcomer, bring them to
+      a milonga, and keep them from drifting off. We'll handle the matching.</p>
+    ${thanks}
+    <div class="card">
+      <form method="POST" action="/api/volunteer">
+        <label class="fld" for="name">Your name</label>
+        <input id="name" name="name" type="text" autocomplete="name" placeholder="Your name" required />
+
+        <label class="fld" for="contact">Best way to reach you</label>
+        <input id="contact" name="contact" type="text" placeholder="Phone, email, or @handle" required />
+
+        <label class="fld" for="area">Your Boston area / neighborhood</label>
+        <input id="area" name="area" type="text" placeholder="e.g. Somerville, JP, Cambridge, Back Bay" required />
+
+        <label class="fld" for="availability">When are you usually free?</label>
+        <input id="availability" name="availability" type="text" placeholder="e.g. weeknights, Sunday practicas" />
+
+        <label class="fld" for="note">Anything else? <span style="font-weight:500;color:#a98a76">(optional)</span></label>
+        <textarea id="note" name="note" placeholder="Years dancing, lead/follow, favorite milongas…"></textarea>
+
+        <button class="submit" type="submit">Sign me up as a buddy</button>
+      </form>
+    </div>
+    <p class="foot">Tango Buddy · Boston · the community that keeps people dancing.</p>
+  `);
+}
+
+/* ---------- page: Lessons tab / studios directory (GET /lessons) ------------ */
+/* The LESSONS tab: real Boston studios that teach beginner lessons. A SEPARATE
+ * collection from organizers (which live on /events). Each card: studio name +
+ * a Call button (tel:, only if a phone exists) + a Website button (new tab,
+ * only if a web exists). PUBLIC page — kept money-free. */
+
+// Normalize a bare domain (e.g. "bluetango.org") to an https:// URL, leaving
+// already-qualified links untouched.
+function studioHref(web) {
+  const w = String(web || '').trim();
+  if (!w) return '';
+  return /^https?:\/\//i.test(w) ? w : 'https://' + w;
+}
+
+async function lessonsPage() {
+  const studios = await store.listStudios();
+  const cards = studios.length ? studios.map((s) => {
+    const href = studioHref(s.web);
+    const ctas = (s.phone || href)
+      ? `<div class="ctas">
+          ${s.phone ? `<a href="tel:${esc(s.phone.replace(/[^0-9+]/g, ''))}">Call</a>` : ''}
+          ${href ? `<a class="alt" href="${esc(href)}" target="_blank" rel="noopener">Website</a>` : ''}
+        </div>`
+      : `<p class="hint" style="margin-top:4px">Ask your buddy — they can help you connect.</p>`;
+    const phoneLine = s.phone
+      ? `<div class="studio">${esc(s.phone)}</div>` : '';
+    return `<div class="card teacher">
+      <h3>${esc(s.name)}</h3>
+      ${phoneLine}
+      ${ctas}
+    </div>`;
+  }).join('') : `<div class="card"><p class="empty">No studios listed yet — check back soon.</p></div>`;
+  return page('Boston Tango Lessons', `
+    <span class="badge">Boston Tango · Lessons</span>
+    <h1>Ready to <span class="accent">learn?</span></h1>
+    <p class="lede">Here are Boston studios teaching beginner lessons. Tap <b>Call</b> or open a
+      studio's <b>Website</b> — your buddy can come along and help you take the first step.</p>
+    ${cards}
+    <p class="foot">Tango Buddy · Boston · the studios that welcome first-timers.</p>
+  `);
+}
+
+/* ---------- page: public events listing (GET /events) ----------------------- */
+/* Warm "what's happening near you" listing of upcoming Boston tango events.
+ * NO LOGIN: a newbie checks in by picking their name (view-as dropdown) and
+ * tapping "I'm going" or "I went" -> POST /api/checkin. */
+
+function typePill(type) {
+  const cls = { Milonga: 'matched', Practica: 'new', Class: 'yes', Social: 'no' }[type] || 'new';
+  return `<span class="pill ${cls}">${esc(type)}</span>`;
+}
+
+// Friendly date like "Fri, Jul 3" (falls back to raw string if unparseable).
+function prettyDate(dateStr) {
+  try {
+    const d = new Date(dateStr + 'T00:00:00');
+    if (isNaN(d)) return dateStr;
+    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  } catch (e) { return dateStr; }
+}
+
+async function eventsPage(flash) {
+  const events = await store.listEvents();
+  const teachers = await store.listTeachers();
+  const orgById = Object.fromEntries(teachers.map((t) => [t.id, t]));
+  const newbies = await store.listNewbies();
+
+  const thanks = flash === 'checkedin'
+    ? `<p class="promise"><b>Got it — see you on the dance floor!</b> Your check-in is saved.
+        Your buddy and the community can see where you are dancing.</p>` : '';
+
+  const newbieOptions = newbies.map((n) =>
+    `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join('');
+
+  const cards = events.length ? events.map((ev) => {
+    const org = ev.organizerId ? orgById[ev.organizerId] : null;
+    const orgLine = org
+      ? `<div class="studio">Hosted by ${esc(org.name)}</div>` : '';
+    // Real events live on TangoTiempo — the whole card's action opens the
+    // TangoTiempo page in a new tab (integrate, don't rebuild).
+    const whenLine = ev.date
+      ? `<div class="studio">${esc(prettyDate(ev.date))} · ${esc(ev.time)} · ${esc(ev.location)}</div>`
+      : `<div class="studio">Details &amp; date on TangoTiempo</div>`;
+    const sourceTag = ev.source
+      ? `<span class="demo-tag">via ${esc(ev.source)}</span>` : '';
+    const linkAction = ev.link
+      ? `<div class="ctas"><a href="${esc(ev.link)}" target="_blank" rel="noopener">View on TangoTiempo →</a></div>`
+      : '';
+    // NO LOGIN check-in: pick your name, choose going/went.
+    const checkin = newbies.length ? `
+      <form class="match-form" method="POST" action="/api/checkin" style="margin-top:12px;flex-wrap:wrap">
+        <input type="hidden" name="eventId" value="${esc(ev.id)}" />
+        <select name="newbieId" required>
+          <option value="" disabled selected>Who are you?</option>
+          ${newbieOptions}
+        </select>
+        <button type="submit" name="status" value="going">I'm going</button>
+        <button type="submit" name="status" value="went" class="alt-btn">I went</button>
+      </form>`
+      : '';
+    return `<div class="card teacher">
+      <h3>${esc(ev.title)} ${typePill(ev.type)}${sourceTag}</h3>
+      ${whenLine}
+      ${orgLine}
+      ${linkAction}
+      ${checkin}
+    </div>`;
+  }).join('') : `<div class="card"><p class="empty">No events posted yet — check back soon.</p></div>`;
+
+  return page('Boston Tango Events', `
+    <span class="badge">Boston Tango · Events</span>
+    <h1>What's <span class="accent">happening near you</span></h1>
+    <p class="lede">Milongas, practicas, classes and socials around Boston, connected via TangoTiempo.
+      Find a night that feels right, bring your buddy, and tap through for the details.</p>
+    ${heroBlock()}
+    ${thanks}
+    ${cards}
+    <p class="foot">Tango Buddy · Boston · come dance — the whole city is your milonga.</p>
+    <style>
+      .match-form .alt-btn{background:#fff;color:var(--terra-d);border:1.5px solid var(--line)}
+    </style>
+  `);
+}
+
+/* ---------- page: admin dashboard (GET /admin) ------------------------------ */
+/* NOTE: no auth — LOCAL DEMO ONLY. In production, gate this route behind an
+ * operator login / session check RIGHT HERE (e.g. verify a signed cookie or an
+ * auth header) before rendering anything below. */
+
+async function adminPage() {
+  const newbies = await store.listNewbies();
+  const volunteers = await store.listVolunteers();
+  const volById = Object.fromEntries(volunteers.map((v) => [v.id, v]));
+
+  const organizers = await store.listTeachers();   // organizers == teachers inventory
+  const orgById = Object.fromEntries(organizers.map((t) => [t.id, t]));
+  const events = await store.listEvents();
+
+  // Prefetch each newbie's check-ins up front (can't await inside .map below).
+  const checkinsByNewbie = {};
+  await Promise.all(newbies.map(async (n) => {
+    checkinsByNewbie[n.id] = await store.listCheckinsForNewbie(n.id);
+  }));
+
+  const volOptions = volunteers.map((v) =>
+    `<option value="${esc(v.id)}">${esc(v.name)} — ${esc(v.area)}</option>`).join('');
+  const orgOptions = organizers.map((t) =>
+    `<option value="${esc(t.id)}">${esc(t.name)} — ${esc(t.studio)}</option>`).join('');
+
+  const newbieRows = newbies.length ? newbies.map((n) => {
+    const buddy = n.buddyId ? volById[n.buddyId] : null;
+    const buddyLabel = buddy ? esc(buddy.name) : '<span class="empty" style="padding:0">—</span>';
+    const statusPill = n.status === 'matched'
+      ? '<span class="pill matched">matched</span>'
+      : '<span class="pill new">new</span>';
+    const consentPill = n.consent
+      ? '<span class="pill yes">yes</span>' : '<span class="pill no">no</span>';
+    // Per-newbie match control -> POST /api/match
+    const matchControl = volunteers.length ? `
+      <form class="match-form" method="POST" action="/api/match">
+        <input type="hidden" name="newbieId" value="${esc(n.id)}" />
+        <select name="volunteerId">
+          <option value="">— assign buddy —</option>
+          ${volOptions}
+        </select>
+        <button type="submit">Assign</button>
+      </form>` : '<span class="empty" style="padding:0">no volunteers yet</span>';
+    // V1.1: check-in history (the retention signal — "where they go").
+    const checkins = checkinsByNewbie[n.id] || [];
+    const evById = Object.fromEntries(events.map((e) => [e.id, e]));
+    const checkinLabel = checkins.length ? checkins.map((c) => {
+      const ev = evById[c.eventId];
+      const label = ev ? esc(ev.title) : '(event removed)';
+      return `<div style="margin-bottom:3px">${c.status === 'went'
+        ? '<span class="pill matched">went</span>' : '<span class="pill new">going</span>'}
+        ${label}</div>`;
+    }).join('') : '<span class="empty" style="padding:0">—</span>';
+
+    // V1.1: ready-for-lessons toggle + handover to an organizer.
+    const readyPill = n.readyForLessons
+      ? '<span class="pill yes">ready</span>' : '<span class="pill no">not yet</span>';
+    const readyForm = `
+      <form class="match-form" method="POST" action="/api/ready" style="margin-bottom:6px">
+        <input type="hidden" name="newbieId" value="${esc(n.id)}" />
+        <input type="hidden" name="ready" value="${n.readyForLessons ? '' : 'on'}" />
+        <button type="submit">${n.readyForLessons ? 'Unmark ready' : 'Mark ready'}</button>
+      </form>`;
+    const handedTo = n.handedToOrganizerId && orgById[n.handedToOrganizerId];
+    const handoverControl = handedTo
+      ? `<div><span class="pill matched">Handed to ${esc(handedTo.name)}</span></div>`
+      : (organizers.length ? `
+        <form class="match-form" method="POST" action="/api/handover">
+          <input type="hidden" name="newbieId" value="${esc(n.id)}" />
+          <select name="organizerId">
+            <option value="">— hand to organizer —</option>
+            ${orgOptions}
+          </select>
+          <button type="submit">Hand off</button>
+        </form>` : '<span class="empty" style="padding:0">no organizers</span>');
+
+    return `<tr>
+      <td><b>${esc(n.name) || '(no name)'}</b></td>
+      <td>${esc(n.contact)}</td>
+      <td>${esc(n.platform)}</td>
+      <td>${esc(n.origination) || '<span class="empty" style="padding:0">—</span>'}</td>
+      <td>${consentPill}</td>
+      <td>${statusPill}</td>
+      <td>${buddyLabel}</td>
+      <td>${matchControl}</td>
+      <td>${checkinLabel}</td>
+      <td>${readyPill}${readyForm}${handoverControl}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="10" class="empty">No newbies captured yet. Try the
+      <a href="/">sign-up page</a>.</td></tr>`;
+
+  const volRows = volunteers.length ? volunteers.map((v) => {
+    const matched = newbies.filter((n) => n.buddyId === v.id).length;
+    return `<tr>
+      <td><b>${esc(v.name)}</b></td>
+      <td>${esc(v.contact)}</td>
+      <td>${esc(v.area)}</td>
+      <td>${esc(v.availability) || '—'}</td>
+      <td>${matched ? matched + ' newbie' + (matched > 1 ? 's' : '') : '—'}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5" class="empty">No volunteers yet. Send buddies to the
+      <a href="/volunteer">volunteer page</a> (we need ~10).</td></tr>`;
+
+  // V1.1: events + organizers management ---------------------------------------
+  const TYPES = ['Milonga', 'Practica', 'Class', 'Social'];
+  const typeOpts = (sel) => TYPES.map((t) =>
+    `<option value="${t}"${t === sel ? ' selected' : ''}>${t}</option>`).join('');
+  const orgSelect = (name, sel) => `<select name="${name}"><option value="">— none —</option>${
+    organizers.map((t) => `<option value="${esc(t.id)}"${t.id === sel ? ' selected' : ''}>${esc(t.name)}</option>`).join('')
+  }</select>`;
+
+  const eventRows = events.length ? events.map((ev) => {
+    const org = ev.organizerId ? orgById[ev.organizerId] : null;
+    return `<tr>
+      <td><form class="match-form" method="POST" action="/api/event/update" style="flex-wrap:wrap;gap:4px">
+        <input type="hidden" name="eventId" value="${esc(ev.id)}" />
+        <input type="text" name="title" value="${esc(ev.title)}" style="min-width:150px" />
+        <select name="type">${typeOpts(ev.type)}</select>
+        <input type="text" name="date" value="${esc(ev.date)}" placeholder="YYYY-MM-DD" style="width:120px" />
+        <input type="text" name="time" value="${esc(ev.time)}" placeholder="HH:MM" style="width:80px" />
+        <input type="text" name="location" value="${esc(ev.location)}" style="min-width:140px" />
+        ${orgSelect('organizerId', ev.organizerId)}
+        <input type="text" name="link" value="${esc(ev.link)}" placeholder="https://…" style="min-width:150px" />
+        <button type="submit">Save</button>
+      </form></td>
+    </tr>`;
+  }).join('') : `<tr><td class="empty">No events yet — add one below.</td></tr>`;
+
+  const organizerRows = organizers.length ? organizers.map((t) => `<tr>
+      <td><form class="match-form" method="POST" action="/api/organizer/update" style="flex-wrap:wrap;gap:4px">
+        <input type="hidden" name="orgId" value="${esc(t.id)}" />
+        <input type="text" name="name" value="${esc(t.name)}" style="min-width:140px" />
+        <input type="text" name="studio" value="${esc(t.studio)}" style="min-width:170px" />
+        <input type="text" name="email" value="${esc(t.email)}" style="min-width:150px" />
+        <input type="text" name="phone" value="${esc(t.phone)}" style="min-width:120px" />
+        <button type="submit">Save</button>
+      </form></td>
+    </tr>`).join('') : `<tr><td class="empty">No organizers yet — add one below.</td></tr>`;
+
+  const eventsCard = `
+    <div class="card">
+      <h3 style="margin:0 0 12px">Events <span class="demo-tag">manage</span></h3>
+      <div class="scroll"><table><tbody>${eventRows}</tbody></table></div>
+      <h3 style="margin:16px 0 8px;font-size:15px">Add an event</h3>
+      <form class="match-form" method="POST" action="/api/event" style="flex-wrap:wrap;gap:6px">
+        <input type="text" name="title" placeholder="Title" required style="min-width:150px" />
+        <select name="type">${typeOpts('Milonga')}</select>
+        <input type="text" name="date" placeholder="YYYY-MM-DD" required style="width:130px" />
+        <input type="text" name="time" placeholder="HH:MM" required style="width:90px" />
+        <input type="text" name="location" placeholder="Location" required style="min-width:150px" />
+        ${orgSelect('organizerId', '')}
+        <input type="text" name="link" placeholder="https://… (optional)" style="min-width:160px" />
+        <button type="submit">Add event</button>
+      </form>
+    </div>`;
+
+  const organizersCard = `
+    <div class="card">
+      <h3 style="margin:0 0 4px">Organizers (events) <span class="demo-tag">manage</span></h3>
+      <p class="hint" style="margin:0 0 12px">The inventory attached to <b>events</b> — who hosts
+        Boston's milongas / practicas / classes. Separate from the Lessons studios below.</p>
+      <div class="scroll"><table><tbody>${organizerRows}</tbody></table></div>
+      <h3 style="margin:16px 0 8px;font-size:15px">Add an organizer</h3>
+      <form class="match-form" method="POST" action="/api/organizer" style="flex-wrap:wrap;gap:6px">
+        <input type="text" name="name" placeholder="Name" required style="min-width:150px" />
+        <input type="text" name="studio" placeholder="Studio / venue" required style="min-width:170px" />
+        <input type="text" name="email" placeholder="Email (optional)" style="min-width:150px" />
+        <input type="text" name="phone" placeholder="Phone (optional)" style="min-width:130px" />
+        <button type="submit">Add organizer</button>
+      </form>
+    </div>`;
+
+  // Studios / Teachers = the LESSONS tab (a SEPARATE collection from organizers).
+  const studios = await store.listStudios();
+  const studioRows = studios.length ? studios.map((s) => `<tr>
+      <td><form class="match-form" method="POST" action="/api/studio/update" style="flex-wrap:wrap;gap:4px">
+        <input type="hidden" name="studioId" value="${esc(s.id)}" />
+        <input type="text" name="name" value="${esc(s.name)}" style="min-width:150px" />
+        <input type="text" name="phone" value="${esc(s.phone)}" placeholder="Phone" style="min-width:130px" />
+        <input type="text" name="web" value="${esc(s.web)}" placeholder="Website" style="min-width:160px" />
+        <button type="submit">Save</button>
+      </form></td>
+    </tr>`).join('') : `<tr><td class="empty">No studios yet — add one below.</td></tr>`;
+
+  const studiosCard = `
+    <div class="card">
+      <h3 style="margin:0 0 4px">Studios / Teachers (lessons) <span class="demo-tag">manage</span></h3>
+      <p class="hint" style="margin:0 0 12px">The Boston studios shown on the <b>Lessons</b> tab
+        (<a href="/lessons">/lessons</a>) — with Call &amp; Website CTAs. Separate from the
+        event Organizers above.</p>
+      <div class="scroll"><table><tbody>${studioRows}</tbody></table></div>
+      <h3 style="margin:16px 0 8px;font-size:15px">Add a studio</h3>
+      <form class="match-form" method="POST" action="/api/studio" style="flex-wrap:wrap;gap:6px">
+        <input type="text" name="name" placeholder="Studio / teacher" required style="min-width:150px" />
+        <input type="text" name="phone" placeholder="Phone (optional)" style="min-width:130px" />
+        <input type="text" name="web" placeholder="Website (optional)" style="min-width:160px" />
+        <button type="submit">Add studio</button>
+      </form>
+    </div>`;
+
+  // Current pairings summary
+  const pairs = newbies.filter((n) => n.buddyId && volById[n.buddyId]);
+  const pairRows = pairs.length ? pairs.map((n) =>
+    `<tr><td><b>${esc(n.name)}</b></td><td>↔</td><td><b>${esc(volById[n.buddyId].name)}</b></td>
+     <td>${esc(volById[n.buddyId].area)}</td></tr>`).join('')
+    : `<tr><td colspan="4" class="empty">No pairings yet — assign a buddy above.</td></tr>`;
+
+  return page('Tango Buddy — Admin', `
+    <span class="badge">Operator Dashboard</span>
+    <h1>Tango Buddy <span class="accent">admin</span></h1>
+    <p class="lede">${newbies.length} newbie(s) · ${volunteers.length} volunteer(s) · ${pairs.length} pairing(s).
+      Local demo — no login.</p>
+
+    <div class="card">
+      <h3 style="margin:0 0 12px">Newbies</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Name</th><th>Contact</th><th>Platform</th><th>Found us</th><th>Consent</th>
+          <th>Status</th><th>Buddy</th><th>Match</th><th>Check-ins</th><th>Lessons handover</th></tr></thead>
+        <tbody>${newbieRows}</tbody>
+      </table></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 12px">Volunteers (buddies)</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Name</th><th>Contact</th><th>Area</th><th>Availability</th><th>Assigned</th></tr></thead>
+        <tbody>${volRows}</tbody>
+      </table></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 12px">Current pairings</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Newbie</th><th></th><th>Buddy</th><th>Area</th></tr></thead>
+        <tbody>${pairRows}</tbody>
+      </table></div>
+    </div>
+
+    ${eventsCard}
+    ${organizersCard}
+    ${studiosCard}
+    <p class="foot">Tango Buddy · Boston · operator view.</p>
+  `, { wide: true });
+}
+
+/* ---------- page: Buddy <-> Newbie chat (GET /chat) ------------------------- */
+/* NO LOGIN. A demo "view as" selector picks a matched pairing and which side
+ * (newbie or buddy) you're speaking as. Messages persist via store.js; a tiny
+ * client poller hits GET /api/thread every ~3s so it feels live. */
+
+async function chatPage(params) {
+  const newbies = await store.listNewbies();
+  const volunteers = await store.listVolunteers();
+  const volById = Object.fromEntries(volunteers.map((v) => [v.id, v]));
+  // A "pairing" = a matched newbie whose buddy volunteer still exists.
+  const pairs = newbies.filter((n) => n.buddyId && volById[n.buddyId]);
+
+  if (!pairs.length) {
+    return page('Tango Buddy — Chat', `
+      <span class="badge">Buddy · Newbie chat</span>
+      <h1>No <span class="accent">pairings</span> yet</h1>
+      <p class="lede">Buddy chat opens once a newbie is matched with a buddy.</p>
+      <div class="card" style="text-align:center">
+        <div class="big">💬</div>
+        <p class="lede" style="margin-bottom:0">Head to the <a href="/admin">Admin</a> page and
+        assign a buddy to a newbie first — then come back here to chat as either side.</p>
+      </div>
+      <p class="foot">Tango Buddy · Boston · private buddy ↔ newbie thread.</p>
+    `);
+  }
+
+  // Which pairing + which side are we viewing as?
+  let sel = pairs.find((n) => n.id === params.id) || pairs[0];
+  const side = params.as === 'buddy' ? 'buddy' : 'newbie';
+  const buddy = volById[sel.buddyId];
+  const thread = await store.getOrCreateBuddyThread(sel.id);
+  const meName = side === 'buddy' ? buddy.name : sel.name;
+  const otherName = side === 'buddy' ? sel.name : buddy.name;
+
+  const pairOptions = pairs.map((n) =>
+    `<option value="${esc(n.id)}"${n.id === sel.id ? ' selected' : ''}>${esc(n.name)} ↔ ${esc(volById[n.buddyId].name)}</option>`
+  ).join('');
+
+  const seg = (val, label) => {
+    const q = `/chat?id=${encodeURIComponent(sel.id)}&as=${val}`;
+    return `<a href="${esc(q)}" class="${side === val ? 'on' : ''}">${esc(label)}</a>`;
+  };
+
+  return page('Tango Buddy — Chat', `
+    <span class="badge">Buddy · Newbie chat <span class="demo-tag">no login · view as</span></span>
+    <h1>Chat with your <span class="accent">${esc(otherName)}</span></h1>
+    <p class="lede">Private 1:1 thread. Pick a pairing and choose whose side to speak from — this is a
+      demo, so no login: you can be either person.</p>
+
+    <div class="card">
+      <form class="switcher" method="GET" action="/chat">
+        <div>
+          <label class="fld" style="margin-top:0">Pairing</label>
+          <select name="id" onchange="this.form.submit()">${pairOptions}</select>
+        </div>
+        <div>
+          <label class="fld" style="margin-top:0">You are…</label>
+          <div class="seg">${seg('newbie', sel.name + ' (newbie)')}${seg('buddy', buddy.name + ' (buddy)')}</div>
+        </div>
+        <noscript><button class="submit" style="width:auto;margin-top:0;padding:12px 16px">Go</button></noscript>
+      </form>
+    </div>
+
+    <div class="card">
+      <ul id="thread" class="thread"><li class="empty">Loading…</li></ul>
+      <form id="composer" class="composer" method="POST" action="/api/chat">
+        <input type="hidden" name="threadId" value="${esc(thread.id)}" />
+        <input type="hidden" name="fromName" value="${esc(meName)}" />
+        <input type="hidden" name="redirect" value="/chat?id=${esc(sel.id)}&as=${side}" />
+        <input type="text" name="body" placeholder="Message as ${esc(meName)}…" autocomplete="off" required />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+    <p class="foot">Tango Buddy · Boston · speaking as <b>${esc(meName)}</b> · updates live.</p>
+
+    ${threadScript(thread.id, meName)}
+  `);
+}
+
+/* ---------- page: Rolling Newbies social feed (GET /social) ----------------- */
+/* One open group feed shared by the whole newbie cohort. No login: pick a name
+ * (or free-type one) and post. Same ~3s poll. */
+
+async function socialPage() {
+  const thread = await store.getRollingNewbiesThread();
+  const newbies = await store.listNewbies();
+  const nameOptions = newbies.map((n) =>
+    `<option value="${esc(n.name)}">${esc(n.name)}</option>`).join('');
+
+  return page('Tango Buddy — Social', `
+    <span class="badge">Rolling Newbies <span class="demo-tag">the cohort</span></span>
+    <h1>The <span class="accent">Rolling Newbies</span></h1>
+    <p class="lede">One open feed everyone learning tango shares. Say hi, ask a question, find people
+      to go to a milonga with. This is the "social" in buddy + social.</p>
+
+    <div class="card">
+      <ul id="thread" class="thread"><li class="empty">Loading…</li></ul>
+      <form id="composer" class="composer" method="POST" action="/api/social" style="flex-wrap:wrap">
+        <input type="hidden" name="threadId" value="${esc(thread.id)}" />
+        <input type="hidden" name="redirect" value="/social" />
+        <input type="text" name="fromName" list="newbie-names" placeholder="Posting as…"
+          autocomplete="off" style="flex:0 0 34%;min-width:130px" required />
+        <datalist id="newbie-names">${nameOptions}</datalist>
+        <input type="text" name="body" placeholder="Say something to the cohort…" autocomplete="off" required />
+        <button type="submit">Post</button>
+      </form>
+    </div>
+    <p class="foot">Tango Buddy · Boston · the peer cohort · updates live.</p>
+
+    ${threadScript(thread.id, ' ')}
+  `);
+}
+
+/* Shared client poller: fetch messages every 3s and render them. meName marks
+ * "your" bubbles; pass " " (never a real name) for feeds with no fixed you. */
+function threadScript(threadId, meName) {
+  return `<script>
+(function(){
+  var THREAD=${JSON.stringify(threadId)}, ME=${JSON.stringify(meName)};
+  var box=document.getElementById('thread');
+  var form=document.getElementById('composer');
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function when(iso){try{return new Date(iso).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});}catch(e){return '';}}
+  var lastCount=-1;
+  function render(msgs){
+    if(msgs.length===lastCount) return; lastCount=msgs.length;
+    if(!msgs.length){box.innerHTML='<li class="empty">No messages yet — say hello!</li>';return;}
+    box.innerHTML=msgs.map(function(m){
+      var mine=(m.fromName===ME)?' me':'';
+      return '<li class="msg'+mine+'"><span class="who">'+esc(m.fromName)+'</span>'+
+        esc(m.body)+'<span class="when">'+when(m.createdAt)+'</span></li>';
+    }).join('');
+    box.scrollTop=box.scrollHeight;
+  }
+  function poll(){
+    fetch('/api/thread?id='+encodeURIComponent(THREAD)).then(function(r){return r.json();})
+      .then(function(d){render(d.messages||[]);}).catch(function(){});
+  }
+  if(form){form.addEventListener('submit',function(ev){
+    ev.preventDefault();
+    var fd=new FormData(form);
+    var input=form.querySelector('input[name=body]');
+    fetch(form.action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams(fd).toString()})
+      .then(function(){input.value='';lastCount=-1;poll();}).catch(function(){});
+  });}
+  poll(); setInterval(poll, 3000);
+})();
+</script>`;
+}
+
+/* ---------- page: "What's Coming" preview (GET /coming) --------------------- */
+/* CRITICAL: features & ideas ONLY. No money / pricing / payments / revenue —
+ * describe each card as an EXPERIENCE, never its economics. */
+
+function comingPage() {
+  const cards = [
+    { ico: '🪪', title: 'The Buddy Card',
+      body: 'One card, tango across the city. A little identity that travels with you from your first lesson to your hundredth milonga — carry your tango life in one place.',
+      tease: 'On the drawing board' },
+    { ico: '📅', title: 'Events',
+      body: 'Milongas, practicas and classes gathered in one warm calendar. See what is on tonight, who is going, and never miss the dance around the corner.',
+      tease: 'Coming soon' },
+    { ico: '✅', title: 'Check-in',
+      body: 'Track your tango journey. Mark the nights you danced, the milestones you hit, and look back on how far you have come since that nervous first step.',
+      tease: 'Coming soon' },
+    { ico: '🎓', title: 'Studio handover',
+      body: 'When you are ready for real lessons, a gentle handover to a welcoming teacher or studio — your buddy can come along, and nothing feels like a cold start.',
+      tease: 'On the roadmap' },
+    { ico: '💬', title: 'Community chat',
+      body: 'Organizers and newcomers in the same friendly room. Ask the local hosts anything, get the inside scoop, and feel part of the scene before you even arrive.',
+      tease: 'On the roadmap' },
+  ];
+  const html = cards.map((c) => `
+    <div class="soon">
+      <div class="ico">${c.ico}</div>
+      <h3>${esc(c.title)}</h3>
+      <p>${esc(c.body)}</p>
+      <span class="tease">${esc(c.tease)}</span>
+    </div>`).join('');
+
+  return page('Tango Buddy — What\'s Coming', `
+    <span class="badge">What's Coming</span>
+    <h1>Where <span class="accent">Tango Buddy</span> is headed</h1>
+    <p class="lede">Buddy chat and the Rolling Newbies feed are just the start. Here is a peek at the
+      experiences we are dreaming up next — all about keeping you dancing.</p>
+    ${heroBlock()}
+    ${html}
+    <p class="foot">Tango Buddy · Boston · ideas in progress — we would love your take.</p>
+  `);
+}
+
+/* ---------- footer-only meta pages (/updates /ideas /todo) ------------------ */
+/* Data-driven from store.listUpdates / listIdeas / listTodos so appending a new
+ * entry is just a db.json edit. Reached ONLY via the footer — never in the top
+ * menu. Ideas + Updates carry NO money language (features/experiences only). */
+
+function metaPage(opts) {
+  const items = opts.items.length ? opts.items.map((it) => `
+    <div class="soon">
+      ${it.tag ? `<span class="tease" style="margin:0 0 8px">${esc(it.tag)}</span>` : ''}
+      <h3>${esc(it.title)}</h3>
+      <p>${esc(it.note)}</p>
+    </div>`).join('')
+    : `<div class="card"><p class="empty">Nothing here yet — check back soon.</p></div>`;
+  return page(opts.title, `
+    <span class="badge">${esc(opts.badge)}</span>
+    <h1>${opts.heading}</h1>
+    <p class="lede">${esc(opts.lede)}</p>
+    ${items}
+    <p class="foot">Tango Buddy · Boston · ${esc(opts.footNote)}</p>
+  `);
+}
+
+async function updatesPage() {
+  const items = (await store.listUpdates()).map((u) => ({
+    tag: 'v' + u.version, title: 'v' + u.version, note: u.note,
+  }));
+  return metaPage({
+    title: "Tango Buddy — Updates",
+    badge: "Updates · What we've added",
+    heading: `What we've <span class="accent">added</span>`,
+    lede: 'The story of Tango Buddy so far — newest first.',
+    footNote: 'always growing, always warmer.',
+    items,
+  });
+}
+
+async function ideasPage() {
+  const items = await store.listIdeas();
+  return metaPage({
+    title: 'Tango Buddy — Ideas',
+    badge: "Ideas · What's possible",
+    heading: `What's <span class="accent">possible</span>`,
+    lede: 'This is where we collect ideas and possibilities for where Tango Buddy could go. Dreaming out loud — all about keeping people dancing.',
+    footNote: 'ideas welcome — tell us what you would love.',
+    items,
+  });
+}
+
+async function todoPage() {
+  const items = await store.listTodos();
+  return metaPage({
+    title: 'Tango Buddy — To-do',
+    badge: 'To-do · Upcoming (approved)',
+    heading: `Upcoming <span class="accent">(approved)</span>`,
+    lede: 'The next things we have agreed to build.',
+    footNote: 'on deck — coming to a milonga near you.',
+    items,
+  });
+}
+
+/* ---------- page: More — outbound links (GET /more) ------------------------- */
+/* Warm hand-offs to the wider tango world. Outbound links open in a new tab.
+ * PUBLIC page — kept money-free (no pricing/payments/$ language). */
+
+function morePage() {
+  return page('Tango Buddy — More', `
+    <span class="badge">More Boston Tango</span>
+    <h1>More <span class="accent">tango near you</span></h1>
+    <p class="lede">A couple of warm places to keep exploring the dance beyond Tango Buddy —
+      open either one and wander.</p>
+    <div class="card teacher">
+      <h3>Boston Tango Calendar</h3>
+      <p>Everything happening on Boston's dance floors, gathered in one local calendar —
+        milongas, practicas and classes across the city, night by night.</p>
+      <div class="ctas">
+        <a href="https://bostontangocalendar.com" target="_blank" rel="noopener">Open Boston Tango Calendar →</a>
+      </div>
+    </div>
+    <div class="card teacher">
+      <h3>TangoTiempo <span style="font-weight:600;color:#a98a76">(national)</span></h3>
+      <p>The wider tango world — events, organizers and communities across the country,
+        all connected in one place. Where Tango Buddy's events come from.</p>
+      <div class="ctas">
+        <a href="https://tangotiempo.com" target="_blank" rel="noopener">Open TangoTiempo →</a>
+      </div>
+    </div>
+    <p class="foot">Tango Buddy · Boston · the dance is bigger than one app.</p>
+  `);
+}
+
+/* ---------- page: admin passphrase gate (when ADMIN_PASS is set) ------------ */
+
+function adminGatePage(wrong) {
+  const msg = wrong
+    ? '<p class="promise"><b>That passphrase did not match.</b> Try again.</p>' : '';
+  return page('Tango Buddy — Admin', `
+    <span class="badge">Operator Dashboard</span>
+    <h1>Admin <span class="accent">passphrase</span></h1>
+    <p class="lede">This dashboard is protected. Enter the operator passphrase to continue.</p>
+    ${msg}
+    <div class="card">
+      <form method="GET" action="/admin">
+        <label class="fld" for="pass">Passphrase</label>
+        <input id="pass" name="pass" type="password" autocomplete="current-password"
+          placeholder="Operator passphrase" required />
+        <button class="submit" type="submit">Enter</button>
+      </form>
+    </div>
+    <p class="foot">Tango Buddy · Boston · operators only.</p>
+  `);
+}
+
+/* ---------- static asset serving (/assets/*) -------------------------------- */
+
+const MIME = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.webp': 'image/webp', '.css': 'text/css', '.txt': 'text/plain',
+};
+
+function serveAsset(res, pathname) {
+  // Only ever serve from ASSETS_DIR; strip the leading /assets/ and any traversal.
+  const rel = decodeURIComponent(pathname.replace(/^\/assets\//, ''));
+  const filePath = path.join(ASSETS_DIR, rel);
+  if (!filePath.startsWith(ASSETS_DIR)) return send(res, 403, 'Forbidden', 'text/plain');
+  fs.readFile(filePath, (err, buf) => {
+    if (err) return send(res, 404, 'Not found', 'text/plain'); // graceful if missing
+    send(res, 200, buf, MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream');
+  });
+}
+
+/* ---------- router ---------------------------------------------------------- */
+
+// The core request handler. Exported so BOTH `node server.js` (local) AND the
+// Vercel serverless function (api/index.js) can drive the exact same app.
+async function requestListener(req, res) {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  const { pathname } = url;
+
+  try {
+    // --- GET routes ---
+    if (req.method === 'GET') {
+      if (pathname === '/') return send(res, 200, newbiePage(url.searchParams.get('flash')));
+      if (pathname === '/volunteer') return send(res, 200, volunteerPage(url.searchParams.get('flash')));
+      if (pathname === '/lessons') return send(res, 200, await lessonsPage());
+      // Organizers are no longer a public browse page — they live on events (and
+      // stay manageable in /admin). The old /teachers route now points at Lessons.
+      if (pathname === '/teachers') return redirect(res, '/lessons');
+      if (pathname === '/events') return send(res, 200, await eventsPage(url.searchParams.get('flash')));
+      if (pathname === '/admin') {
+        // Admin gate for the public deploy (open when ADMIN_PASS is unset).
+        if (!adminOK(req, url)) {
+          const tried = url.searchParams.get('pass');
+          return send(res, 200, adminGatePage(!!tried));
+        }
+        // Passphrase supplied via ?pass= → drop the cookie, then land on /admin.
+        if (ADMIN_PASS && url.searchParams.get('pass') === ADMIN_PASS) {
+          res.writeHead(302, {
+            'Set-Cookie': `${ADMIN_COOKIE}=${encodeURIComponent(ADMIN_PASS)}; Path=/; HttpOnly; SameSite=Lax`,
+            Location: '/admin',
+          });
+          return res.end();
+        }
+        return send(res, 200, await adminPage());
+      }
+      if (pathname === '/chat') return send(res, 200, await chatPage({
+        id: url.searchParams.get('id'), as: url.searchParams.get('as'),
+      }));
+      if (pathname === '/social') return send(res, 200, await socialPage());
+      if (pathname === '/coming') return send(res, 200, comingPage());
+      if (pathname === '/more') return send(res, 200, morePage());
+      if (pathname === '/updates') return send(res, 200, await updatesPage());
+      if (pathname === '/ideas') return send(res, 200, await ideasPage());
+      if (pathname === '/todo') return send(res, 200, await todoPage());
+      if (pathname === '/api/thread') {
+        const id = url.searchParams.get('id');
+        return sendJson(res, 200, { id, messages: id ? await store.listMessages(id) : [] });
+      }
+      // V1.2: token device-landing lookup — the with-token home fetches this to
+      // render "welcome back" + upcoming events + the newbie's own check-ins.
+      if (pathname === '/api/me') {
+        const token = url.searchParams.get('token');
+        const newbie = token ? await store.findNewbieByToken(token) : null;
+        if (!newbie) return sendJson(res, 404, { error: 'not found' });
+        return sendJson(res, 200, {
+          // Only expose what the home needs (no contact / consent leakage).
+          newbie: { id: newbie.id, name: newbie.name, status: newbie.status },
+          events: await store.listEvents(),
+          checkins: await store.listCheckinsForNewbie(newbie.id),
+        });
+      }
+      // V1.2: PWA add-to-home-screen manifest (icons degrade gracefully if the
+      // referenced /assets/icon.png is absent — the OS just uses a default).
+      if (pathname === '/manifest.webmanifest') {
+        const manifest = {
+          name: 'Boston Tango Buddies',
+          short_name: 'Tango Buddies',
+          description: SITE_DESC,
+          start_url: '/',
+          display: 'standalone',
+          background_color: '#fff6ee',
+          theme_color: '#c85a3c',
+          icons: [
+            { src: '/assets/icon.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: '/assets/icon.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          ],
+        };
+        return send(res, 200, JSON.stringify(manifest, null, 2),
+          'application/manifest+json; charset=utf-8');
+      }
+      if (pathname.startsWith('/assets/')) return serveAsset(res, pathname);
+      if (pathname === '/favicon.ico') return serveAsset(res, '/assets/icon.png');
+      return send(res, 404, page('Not found', '<div class="card"><h1>Not found</h1><p class="lede">No such page. <a href="/">Home</a>.</p></div>'));
+    }
+
+    // --- POST routes (form submissions) ---
+    if (req.method === 'POST') {
+      const body = await parseBody(req);
+
+      // Admin gate: the /admin-driven POST routes require the passphrase when
+      // ADMIN_PASS is set. Newbie/token/chat flows below stay open (no login).
+      const ADMIN_POSTS = ['/api/match', '/api/event', '/api/event/update',
+        '/api/organizer', '/api/organizer/update', '/api/studio', '/api/studio/update',
+        '/api/ready', '/api/handover'];
+      if (ADMIN_POSTS.includes(pathname) && !adminOK(req, url)) {
+        return send(res, 403, 'Forbidden — admin passphrase required.', 'text/plain');
+      }
+
+      if (pathname === '/api/newbie') {
+        // consent is required by the form; guard server-side too.
+        // V1.2: mint the device token and return it so the client can save it to
+        // localStorage (tb_token). AJAX callers ask for JSON; a plain no-JS POST
+        // still redirects to the server-rendered thank-you.
+        const newbie = await store.addNewbie(body);
+        if ((req.headers.accept || '').includes('application/json')) {
+          return sendJson(res, 200, { token: newbie.token });
+        }
+        return redirect(res, '/?flash=thanks');
+      }
+      if (pathname === '/api/volunteer') {
+        await store.addVolunteer(body);
+        return redirect(res, '/volunteer?flash=thanks');
+      }
+      if (pathname === '/api/match') {
+        await store.setMatch(body.newbieId, body.volunteerId);
+        return redirect(res, '/admin');
+      }
+      // --- V1.1 endpoints ---
+      // Public: a newbie checks into an event (no login — newbieId from dropdown).
+      if (pathname === '/api/checkin') {
+        // Two front doors, same store call: the /events dropdown sends newbieId;
+        // the V1.2 token home sends a token (frictionless one-tap, no dropdown).
+        let newbieId = body.newbieId;
+        if (!newbieId && body.token) {
+          const n = await store.findNewbieByToken(body.token);
+          if (n) newbieId = n.id;
+        }
+        if (newbieId && body.eventId) {
+          await store.checkIn(newbieId, body.eventId, body.status);
+        }
+        if ((req.headers.accept || '').includes('application/json')) {
+          return sendJson(res, 200, { ok: true });
+        }
+        return redirect(res, '/events?flash=checkedin');
+      }
+      if (pathname === '/api/event') {
+        await store.addEvent(body);
+        return redirect(res, '/admin');
+      }
+      if (pathname === '/api/event/update') {
+        await store.updateEvent(body.eventId, body);
+        return redirect(res, '/admin');
+      }
+      if (pathname === '/api/organizer') {
+        await store.addOrganizer(body);
+        return redirect(res, '/admin');
+      }
+      if (pathname === '/api/organizer/update') {
+        await store.updateOrganizer(body.orgId, body);
+        return redirect(res, '/admin');
+      }
+      if (pathname === '/api/studio') {
+        await store.addStudio(body);
+        return redirect(res, '/admin');
+      }
+      if (pathname === '/api/studio/update') {
+        await store.updateStudio(body.studioId, body);
+        return redirect(res, '/admin');
+      }
+      if (pathname === '/api/ready') {
+        await store.setReady(body.newbieId, body.ready);
+        return redirect(res, '/admin');
+      }
+      if (pathname === '/api/handover') {
+        await store.setHandover(body.newbieId, body.organizerId);
+        return redirect(res, '/admin');
+      }
+      if (pathname === '/api/chat' || pathname === '/api/social') {
+        // No auth — identity is just the free-text fromName (demo).
+        if (body.threadId && (body.body || '').trim()) {
+          await store.postMessage(body.threadId, body.fromName, body.body);
+        }
+        // fetch() callers ignore the body; <noscript>/plain posts get a redirect.
+        if ((req.headers.accept || '').includes('application/json')) {
+          return sendJson(res, 200, { ok: true });
+        }
+        return redirect(res, body.redirect || (pathname === '/api/social' ? '/social' : '/chat'));
+      }
+      return send(res, 404, 'Not found', 'text/plain');
+    }
+
+    send(res, 405, 'Method not allowed', 'text/plain');
+  } catch (e) {
+    console.error('Server error:', e);
+    send(res, 500, 'Server error', 'text/plain');
+  }
+}
+
+const server = http.createServer(requestListener);
+
+// Only listen when run directly (`node server.js`). On Vercel, api/index.js
+// imports `requestListener` and drives it as a serverless function instead.
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Tango Buddy POC running -> http://localhost:${PORT}`);
+    console.log(`Store backend: ${store.USE_FIRESTORE ? 'Firestore (firebase-admin)' : 'local JSON (data/db.json)'}`);
+    console.log('Routes: /  /volunteer  /lessons  /events  /more  /admin   (Ctrl-C to stop)');
+  });
+}
+
+module.exports = { requestListener, server };

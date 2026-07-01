@@ -1,0 +1,12 @@
+{
+  "name": "tango-buddy-poc",
+  "version": "0.5.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}
