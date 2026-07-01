@@ -20,7 +20,7 @@ handover** that connects the community layer to the lessons layer.
 > the store is **env-gated** (Firestore when Firebase envs are present, local
 > JSON file otherwise) and a Vercel serverless catch-all wraps the existing app.
 > **Locally it still runs with zero dependencies and zero cloud** — `node
-> server.js` uses the JSON file. See "Swappable data layer" and "Deploy to
+> app.js` uses the JSON file. See "Swappable data layer" and "Deploy to
 > Vercel" below.
 
 ## Run it
@@ -31,11 +31,11 @@ envs are set, so the local JSON path never touches it.
 
 ```bash
 cd poc
-node server.js
+node app.js
 ```
 
 Then open **http://localhost:3000**. Stop with `Ctrl-C`.
-(Set a different port with `PORT=4000 node server.js`.) The startup log prints the
+(Set a different port with `PORT=4000 node app.js`.) The startup log prints the
 active store backend (`local JSON` vs `Firestore`).
 
 ## Routes
@@ -70,7 +70,7 @@ pairing and toggle whether you're speaking as the **newbie** or the **buddy**, t
 send. On `/social` you just type (or pick) a "posting as" name. **Event check-in** on
 `/events` is the same idea — pick your name from a dropdown, no login. Messages and
 check-ins persist in `db.json` via `store.js` and appear live where relevant.
-Code comments in `server.js` mark exactly where an operator login would gate the
+Code comments in `app.js` mark exactly where an operator login would gate the
 `/admin`-driven POST endpoints (events, organizers, ready, handover) in production.
 
 ### "What's Coming" is features/ideas only — no money
@@ -164,7 +164,7 @@ runtime**:
   dev.
 
 Every public `store.js` function is **async** (returns a Promise) so the one
-surface works for both backends; `server.js` `await`s them. The surface is
+surface works for both backends; `app.js` `await`s them. The surface is
 unchanged and backend-agnostic:
 
 ```
@@ -203,14 +203,14 @@ Both are editable in `/admin` under two distinct sections. The `teachers → tea
 | `ADMIN_PASS`            | Admin passphrase. When set, `/admin` (+ its POST routes) require it; **unset → admin is open (local dev)**. Newbie/token flows are never gated. |
 | `PORT`                  | Local listen port (default `3000`). |
 
-With **no** env vars set, `node server.js` runs the local JSON store with admin
+With **no** env vars set, `node app.js` runs the local JSON store with admin
 open — the zero-config local experience.
 
 ## Deploy to Vercel
 
 `vercel.json` rewrites requests to a single serverless function (`api/index.js`)
-that delegates to the exact same `requestListener` exported from `server.js` — so
-the app behaves identically locally (`node server.js`) and on Vercel.
+that delegates to the exact same `requestListener` exported from `app.js` — so
+the app behaves identically locally (`node app.js`) and on Vercel.
 `firebase-admin` is a declared dependency (installed on Vercel; only imported when
 the Firebase envs are present).
 
@@ -229,7 +229,7 @@ the Firebase envs are present).
 >    reads prefer `/tmp/db.json` if it exists). So a no-Firebase Vercel deploy now
 >    **renders all seeded content and no longer crashes** — writes persist within a
 >    warm instance and reset on cold start. **With the Firebase envs set, Firestore
->    is used and none of the `/tmp` path runs.** Local `node server.js` is unchanged:
+>    is used and none of the `/tmp` path runs.** Local `node app.js` is unchanged:
 >    it writes to `data/db.json` exactly as before.
 
 ```bash
@@ -260,14 +260,14 @@ all live in `db.json` too and are only ever touched through these `store.js`
 functions. **Organizers are the same inventory as teachers** — one list, two hats
 (teach + host). Nothing else touches the JSON.
 
-`server.js` and the pages never touch `db.json` directly — they only call
+`app.js` and the pages never touch `db.json` directly — they only call
 `store.js`. Swap the store, everything else stays.
 
 ## Files
 
 ```
 poc/
-├── server.js        # HTTP server + page templates + routes; exports requestListener
+├── app.js        # HTTP server + page templates + routes; exports requestListener
 ├── store.js         # the ONLY data layer — env-gated Firestore / local-JSON (async)
 ├── api/index.js     # Vercel serverless entrypoint (delegates to requestListener)
 ├── vercel.json      # Vercel rewrite → /api/index (assets/favicon excluded) + includeFiles seed

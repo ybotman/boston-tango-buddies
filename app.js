@@ -1432,7 +1432,7 @@ async function requestListener(req, res) {
 
 const server = http.createServer(requestListener);
 
-// Only listen when run directly (`node server.js`). On Vercel, api/index.js
+// Only listen when run directly (`node app.js`). On Vercel, api/index.js
 // imports `requestListener` and drives it as a serverless function instead.
 if (require.main === module) {
   server.listen(PORT, () => {

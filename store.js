@@ -14,7 +14,7 @@
  *      with Node's built-in `fs`. Zero dependencies, unchanged local behavior.
  *
  * >>> THIS FILE IS THE ONLY THING THAT KNOWS WHICH BACKEND IS IN USE. <<<
- * Everything above store.js (server.js, the pages, the token/tb_token flow) is
+ * Everything above store.js (app.js, the pages, the token/tb_token flow) is
  * backend-agnostic — it only ever awaits these functions.
  *
  * All public functions are ASYNC (they return Promises) so the same surface

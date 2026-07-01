@@ -2,6 +2,10 @@
   "meta": {
     "updates": [
       {
+        "version": "0.5.2",
+        "note": "Vercel fix: rename server.js→app.js (avoid magic server-entry hijack)."
+      },
+      {
         "version": "0.5.1",
         "note": "Vercel deployability fix (static assets, bundled seed, /tmp write fallback)."
       },

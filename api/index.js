@@ -3,7 +3,7 @@
  * =============================================================================
  * Every request is rewritten here by vercel.json. We simply delegate to the
  * SAME request handler the local server uses (`requestListener` exported from
- * server.js), so the app behaves identically whether it runs as `node server.js`
+ * app.js), so the app behaves identically whether it runs as `node app.js`
  * locally or as a Vercel function in the cloud.
  *
  * On Vercel the filesystem is ephemeral, so data MUST come from Firestore:
@@ -14,6 +14,6 @@
 
 'use strict';
 
-const { requestListener } = require('../server');
+const { requestListener } = require('../app');
 
 module.exports = (req, res) => requestListener(req, res);
