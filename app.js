@@ -16,6 +16,7 @@ const path = require('path');
 const { URL } = require('url');
 const store = require('./store');
 const { fetchTangoTiempoEvent } = require('./tangotiempo');
+const { getLiveEvents } = require('./eventsLive');
 
 // Version comes straight from package.json (zero-dependency, read once at start).
 const VERSION = require('./package.json').version;
@@ -726,9 +727,14 @@ async function lessonsPage() {
 }
 
 /* ---------- page: public events listing (GET /events) ----------------------- */
-/* Warm "what's happening near you" listing of upcoming Boston tango events.
- * NO LOGIN: a newbie checks in by picking their name (view-as dropdown) and
- * tapping "I'm going" or "I went" -> POST /api/checkin. */
+/* v0.8.1 — a LIVE feed of beginner nights for the NEXT 7 DAYS, pulled server-side
+ * from the MasterCalendar/TangoTiempo API (beginnerFriendly=true SUPERSET, near
+ * Boston), with recurring MASTERS expanded (RRULE) into real dated occurrences.
+ * ONE fetch, split by flag into THREE tiers: (1) "For beginners" forBeginners,
+ * (2) "Feeling a bit more adventurous?" beginnerFriendly-not-forBeginners,
+ * (3) "Even more" → tangotiempo.com / ask your buddy. Empty tiers are hidden.
+ * Falls back to the stored seed events when the live feed is empty / unreachable,
+ * so the page never goes blank. NO LOGIN. Each card whole-links to tangotiempo.*/
 
 function typePill(type) {
   const cls = { Milonga: 'matched', Practica: 'new', Class: 'yes', Social: 'no' }[type] || 'new';
@@ -755,59 +761,119 @@ function prettyDateTime(iso) {
   } catch (e) { return iso; }
 }
 
+// One mobile-first event card. Shared by the LIVE feed (normalized occurrences
+// carry `date`) and the stored fallback (seed events carry `startDate`). Each
+// card is ONE tap-target that deep-links to its tangotiempo.com/event/<id> page.
+//   [icon]  shortName (bold)
+//           org name
+//           date/day · category pill · venue
+function eventCardHtml(ev) {
+  const href = ev.url || ev.link || 'https://tangotiempo.com';
+  const label = ev.shortName || ev.title || 'Tango event';
+  // Icon is external (Azure blob) — reference directly; hide gracefully when
+  // absent or if the URL 404s.
+  const thumb = ev.image
+    ? `<img class="ev-thumb" src="${esc(ev.image)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
+    : '';
+  const orgLine = ev.orgName ? `<div class="ev-org">${esc(ev.orgName)}</div>` : '';
+  // Live occurrences carry an ISO `date`; seed events carry `startDate` (or the
+  // legacy `date`+`time`). Prefer whichever is present.
+  const whenSrc = ev.date || ev.startDate;
+  const when = whenSrc
+    ? (String(whenSrc).indexOf('T') > -1
+      ? prettyDateTime(whenSrc)
+      : prettyDate(whenSrc) + (ev.time ? ' · ' + ev.time : ''))
+    : '';
+  const cat = ev.category || ev.type;
+  const venue = ev.venueName || ev.location;
+  const meta = `<div class="ev-meta">
+      ${when ? `<span>${esc(when)}</span>` : ''}
+      ${cat ? typePill(cat) : ''}
+      ${venue ? `<span>${esc(venue)}</span>` : ''}
+    </div>`;
+  return `<a class="card ev-card" href="${esc(href)}" target="_blank" rel="noopener">
+    ${thumb}
+    <div class="ev-body">
+      <div class="ev-name">${esc(label)}</div>
+      ${orgLine}
+      ${meta}
+    </div>
+  </a>`;
+}
+
 async function eventsPage(flash) {
-  // BEGINNER-FRIENDLY ONLY: the /events tab shows beginner-friendly events; the
-  // buddy is the door to everything else. Manual-curation-wins: the seeded events
-  // are Toby's hand-picked beginner links, so a missing/unknown flag defaults to
-  // TRUE — we only hide an event whose flag is EXPLICITLY false. When in doubt,
-  // show (never let the filter empty the page).
-  const events = (await store.listEvents()).filter((ev) => ev.beginnerFriendly !== false);
+  // LIVE FEED FIRST: pull the next-7-days beginnerFriendly SUPERSET from the
+  // MasterCalendar API (server-side, cached, RRULE-expanded). One fetch, then
+  // SPLIT BY FLAG into two tiers. If it comes back empty or not-live, fall back
+  // to the stored seed events (the current 4) so the page never blanks.
+  const live = await getLiveEvents();
+  let usingFallback = false;
+  const feed = (live && live.live && live.events.length) ? live.events : null;
+
+  // Tier 1: made-for-newcomers.  Tier 2: broader beginner-friendly set MINUS
+  // tier 1 (still welcoming, a bit more going on).
+  let tier1 = [];
+  let tier2 = [];
+  let fallbackItems = null;
+  if (feed) {
+    tier1 = feed.filter((ev) => ev.forBeginners === true);
+    tier2 = feed.filter((ev) => ev.beginnerFriendly === true && ev.forBeginners !== true);
+  }
+  // Fall back to seed when the live feed produced NOTHING usable in either tier.
+  if (!tier1.length && !tier2.length) {
+    usingFallback = true;
+    // Manual-curation-wins: seed events are hand-picked beginner links, so a
+    // missing/unknown flag defaults to TRUE — only hide an EXPLICITLY-false one.
+    fallbackItems = (await store.listEvents()).filter((ev) => ev.beginnerFriendly !== false);
+  }
 
   const thanks = flash === 'checkedin'
     ? `<p class="promise"><b>Got it — see you on the dance floor!</b> Your check-in is saved.
         Your buddy and the community can see where you are dancing.</p>` : '';
 
-  // Mobile-first event cards. Each card is ONE tap-target that deep-links to the
-  // real TangoTiempo event page (integrate, don't rebuild). Layout per event:
-  //   [icon]  shortName (bold)
-  //           org name
-  //           date · category pill · venue
-  const cards = events.length ? events.map((ev) => {
-    const href = ev.url || ev.link || 'https://tangotiempo.com';
-    const label = ev.shortName || ev.title || 'Tango event';
-    // Icon is external (Azure blob) — reference directly; hide gracefully when
-    // absent (event 685332 has none) or if the URL 404s.
-    const thumb = ev.image
-      ? `<img class="ev-thumb" src="${esc(ev.image)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
-      : '';
-    const orgLine = ev.orgName ? `<div class="ev-org">${esc(ev.orgName)}</div>` : '';
-    const when = ev.startDate
-      ? prettyDateTime(ev.startDate)
-      : (ev.date ? prettyDate(ev.date) + (ev.time ? ' · ' + ev.time : '') : '');
-    const cat = ev.category || ev.type;
-    const meta = `<div class="ev-meta">
-        ${when ? `<span>${esc(when)}</span>` : ''}
-        ${cat ? typePill(cat) : ''}
-        ${(ev.venueName || ev.location) ? `<span>${esc(ev.venueName || ev.location)}</span>` : ''}
-      </div>`;
-    return `<a class="card ev-card" href="${esc(href)}" target="_blank" rel="noopener">
-      ${thumb}
-      <div class="ev-body">
-        <div class="ev-name">${esc(label)}</div>
-        ${orgLine}
-        ${meta}
+  // Build the tier body. On fallback: a single "Beginner nights" section with the
+  // saved-picks note (0.8.0 behavior). Live: hide any empty tier's heading.
+  let tiersHtml;
+  if (usingFallback) {
+    const cards = fallbackItems.length
+      ? fallbackItems.map(eventCardHtml).join('')
+      : `<div class="card"><p class="empty">No beginner nights in the next 7 days — check back soon.</p></div>`;
+    tiersHtml = `
+      <p class="hint" style="margin:0 0 14px">showing saved picks</p>
+      <h2 class="tier-h">Beginner nights</h2>
+      ${cards}`;
+  } else {
+    const tier1Html = tier1.length ? `
+      <h2 class="tier-h">For beginners</h2>
+      <p class="tier-sub">Made for newcomers — come as you are.</p>
+      ${tier1.map(eventCardHtml).join('')}` : '';
+    const tier2Html = tier2.length ? `
+      <h2 class="tier-h">Feeling a bit more adventurous?</h2>
+      <p class="tier-sub">Still welcoming, a little more going on.</p>
+      ${tier2.map(eventCardHtml).join('')}` : '';
+    tiersHtml = tier1Html + tier2Html;
+  }
+
+  // Tier 3 — "Even more": money-free hand-off to the whole Boston calendar + the buddy.
+  const moreBlock = `
+    <div class="card teacher">
+      <h3>Even more</h3>
+      <p>Want the full Boston calendar? →
+        <a href="https://tangotiempo.com" target="_blank" rel="noopener"><b>tangotiempo.com</b></a><br>
+        Or, anytime, <b style="color:var(--terra-d)">ask your buddy.</b></p>
+      <div class="ctas">
+        <a href="https://tangotiempo.com" target="_blank" rel="noopener">Open the whole calendar →</a>
       </div>
-    </a>`;
-  }).join('') : `<div class="card"><p class="empty">No events posted yet — check back soon.</p></div>`;
+    </div>`;
 
   return page('Boston Tango Events', `
     <span class="badge">Boston Tango · Events</span>
-    <h1><span class="accent">Beginner-friendly</span> nights</h1>
-    <p class="lede">These are the events made for newcomers — come as you are. Want more than this?
-      <b style="color:var(--terra-d)">Ask your buddy.</b></p>
+    <h1>Beginner nights — <span class="accent">next 7 days</span></h1>
+    <p class="lede">Events made for newcomers, near Boston. Come as you are.</p>
     ${heroBlock()}
     ${thanks}
-    ${cards}
+    ${tiersHtml}
+    ${moreBlock}
     <p class="foot">Tango Buddy · Boston · come dance — the whole city is your milonga.</p>
     <style>
       .ev-card{display:flex;gap:12px;align-items:center;text-decoration:none;color:var(--ink)}
@@ -818,6 +884,9 @@ async function eventsPage(flash) {
       .ev-name{font-weight:800;font-size:17px;line-height:1.2;margin-bottom:2px}
       .ev-org{color:var(--terra-d);font-weight:700;font-size:14px;margin-bottom:7px}
       .ev-meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13px;color:var(--soft)}
+      .tier-h{font-size:20px;font-weight:800;margin:22px 0 2px}
+      .tier-h:first-of-type{margin-top:6px}
+      .tier-sub{color:var(--soft);font-size:14px;margin:0 0 12px}
     </style>
   `);
 }
@@ -1453,6 +1522,14 @@ async function requestListener(req, res) {
       if (pathname === '/api/thread') {
         const id = url.searchParams.get('id');
         return sendJson(res, 200, { id, messages: id ? await store.listMessages(id) : [] });
+      }
+      // v0.8.1: LIVE feed of the beginnerFriendly SUPERSET (next 7 days) from the
+      // MasterCalendar API, RRULE-expanded + cached (~15 min); each occurrence
+      // carries BOTH forBeginners + beginnerFriendly flags so /events can split
+      // into tiers. Never throws — returns { events:[], live:false } on ANY
+      // failure so callers stay safe.
+      if (pathname === '/api/events-live') {
+        return sendJson(res, 200, await getLiveEvents());
       }
       // V1.2: token device-landing lookup — the with-token home fetches this to
       // render "welcome back" + upcoming events + the newbie's own check-ins.

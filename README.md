@@ -7,6 +7,45 @@ buddy**, and let an operator **hand-match** them — plus a **Lessons** tab of r
 Boston studios, a public **events** listing with **check-in**, and a **studio
 handover** that connects the community layer to the lessons layer.
 
+> **v0.8.1 — `/events` is now a THREE-TIER layout (mobile-first, no login).**
+> `eventsLive.js` fetches the **beginnerFriendly=true SUPERSET** once (this set already
+> includes the `forBeginners` events; each normalized occurrence still carries **both**
+> `forBeginners` and `beginnerFriendly` booleans), same next-7-days window / pagination /
+> RRULE expansion / ~15-min cache / `{events:[],live:false}` on failure. The `/events`
+> page **splits that one fetch by flag** into two rendered sections plus a link tier:
+> **Tier 1 "For beginners"** (`forBeginners === true`, "Made for newcomers — come as you
+> are.", shown first) → **Tier 2 "Feeling a bit more adventurous?"** (`beginnerFriendly
+> === true` AND `forBeginners !== true`, "Still welcoming, a little more going on.") →
+> **Tier 3 "Even more"** (money-free: "Want the full Boston calendar? → **tangotiempo.com**"
+> new tab, and always **"ask your buddy."**). **Empty tiers hide their heading.** If BOTH
+> live tiers are empty or `live:false`, it falls back to the stored **seed** under a single
+> "Beginner nights" heading with the "showing saved picks" note (as v0.8.0). Both tiers
+> reuse `eventCardHtml`; cards deep-link to `tangotiempo.com/event/<id>`.
+>
+> **v0.8.0 — `/events` is now a LIVE feed from the MasterCalendar/TangoTiempo API.**
+> `/events` no longer lists the stored seed — it renders **beginner nights for the
+> next 7 days** pulled **server-side** from our own public backend
+> (`GET https://calendarbeaf-prod.azurewebsites.net/api/events` with
+> `appId=1&useGeoSearch=true&lat=42.3601&lng=-71.0589&radius=50mi&forBeginners=true&start=…&end=…&limit=500`),
+> paginating until `page === pages`. Recurring events come back as **masters with an
+> RRULE** (`recurrenceRule`) — a new server module **`eventsLive.js`** expands them
+> **client-of-the-API-side** with the **`rrule`** dep (new dependency): anchor
+> `DTSTART = startDate`, `rrulestr(...).between(windowStart, windowEnd, true)`,
+> preserving time-of-day; one-offs are included if their `startDate` is in-window.
+> Occurrences are normalized to
+> `{ id, url:'https://tangotiempo.com/event/<id>', shortName, orgName, date, venueName, category, image, forBeginners, beginnerFriendly }`,
+> sorted ascending, and **cached in-memory (~15 min TTL)**. A new endpoint
+> **`GET /api/events-live`** returns `{ events, live, window }` on success or
+> **`{ events:[], live:false }` on ANY failure** (network / non-200 / parse — never
+> throws). The `/events` page server-renders from the same cached logic; heading is
+> "**Beginner nights — next 7 days**" ("Events made for newcomers, near Boston. Come
+> as you are."). **Fallback:** if the live feed is empty or `live:false`, the page
+> falls back to the stored **seed events** (`store.listEvents()`, the current 4) with
+> a small "showing saved picks" note, so it never blanks. A money-free **"Want more?"**
+> block at the bottom links the whole Boston calendar → **tangotiempo.com** (new tab)
+> and emphasizes **"ask your buddy."** The `data/db.json` seed (4 events / 9 studios)
+> is kept intact as the fallback.
+
 > **v0.7.1 — events = beginner-friendly only + local `/tmp` store footgun fixed.**
 > The `/events` tab now shows **beginner-friendly events only** — the buddy is the
 > door to everything else. Copy is reframed to a warm beginner heading
@@ -100,7 +139,7 @@ active store backend (`local JSON` vs `Firestore`).
 | `GET /api/me?token=…` | Returns `{ newbie:{id,name,status}, events:[…], checkins:[…] }` for the with-token home. 404 if the token is unknown (client then clears it and shows the form). |
 | `GET /manifest.webmanifest` | PWA **add-to-home-screen** manifest (name "Boston Tango Buddies", short_name "Tango Buddies", `display:standalone`, warm theme/background, `start_url:"/"`, icons → `/assets/icon.png`). `application/manifest+json`. |
 | `GET /volunteer` | **Volunteer (buddy) capture** — the other side. Name, contact, Boston area, availability, note. → `POST /api/volunteer` |
-| `GET /events`    | **Events — beginner-friendly only (v0.7.1).** Public listing reframed for newcomers ("**Beginner-friendly nights**" + "Ask your buddy" for more). Shows only events where `beginnerFriendly !== false` (**manual-curation-wins:** missing/unknown ⇒ shown, so the 4 curated seed events stay visible). **v0.6.0:** 4 **real** TangoTiempo events as **mobile-first cards** — a rounded **icon** (hidden when absent, e.g. event 685332), **shortName** (bold) then the **organizer** name, a pretty date + category pill + venue. The **whole card deep-links to its TangoTiempo event page** (`target="_blank"`). Data is pulled via `fetchTangoTiempoEvent` (which also computes the normalized `beginnerFriendly` flag) and stored by `store.js`. |
+| `GET /events`    | **Events — LIVE 3-tier beginner feed, next 7 days (v0.8.1).** Server-renders from **one** `beginnerFriendly=true` SUPERSET fetch (today 00:00 → +7 days, near Boston, all pages) via `eventsLive.js` — masters **RRULE-expanded** (`rrule` dep), one-offs if in-window, cached ~15 min — then **split by flag** into **Tier 1 "For beginners"** (`forBeginners`) and **Tier 2 "Feeling a bit more adventurous?"** (`beginnerFriendly` minus `forBeginners`); **empty tiers hide their heading**. Mobile-first cards (`eventCardHtml`): **icon** (hidden when absent), **shortName** (bold) then **organizer**, occurrence date/day + category pill + venue; **whole card deep-links to `tangotiempo.com/event/<id>`** (`target="_blank"`). **Fallback:** both tiers empty / `live:false` → stored seed (`store.listEvents()`) under a single "Beginner nights" heading + "showing saved picks" note. **Tier 3 "Even more"** block links **tangotiempo.com** (new tab) + emphasizes **"ask your buddy."** |
 | `GET /lessons`  | **Lessons tab (v0.5.0)** — the 9 **real** Boston teaching studios (Alla Tango, Blue Tango, Foundry/Roger Wood, Queer Tango Boston, Tango Academy of Boston, Tango Affair, Tango Society of Boston, Tango Spark, Ultimate Tango) as mobile cards. Each card: studio name + a **Call** button (`tel:`, only if a phone exists) + a **Website** button (opens in a new tab, only if a web exists). Warm, money-free intro. This is the **studios/teachers** collection — SEPARATE from the event **organizers**. The newbie "I want lessons" intent (with-token home) links here. |
 | `GET /teachers`  | **302-redirects to `/lessons`** (v0.5.0). Organizers are no longer a public browse page — they live on events and stay manageable in `/admin`. |
 | `GET /more`      | **v0.4.0 — More.** Two warm outbound links (open in a new tab): **Boston Tango Calendar** (bostontangocalendar.com) and **TangoTiempo** (tangotiempo.com, national). Linked from the **footer**. Money-free. |
@@ -112,6 +151,7 @@ active store backend (`local JSON` vs `Firestore`).
 | `GET /ideas`     | **Ideas — "What's possible"** — where we collect ideas/possibilities for where Tango Buddy could go (Buddy Card, community network, rolling lifecycle, organizer↔community chat, multi-city, deeper TangoTiempo link). **Features/ideas only — no money language.** **Footer-only page.** Data-driven from `store.listIdeas()`. |
 | `GET /todo`      | **To-do — "Upcoming (approved)"** — the next agreed things to build (token device-landing, real organizers, rolling lifecycle demo). **Footer-only page.** Data-driven from `store.listTodos()`. |
 | `GET /api/thread?id=…` | Returns `{ id, messages: [...] }` (oldest-first) for the chat/social pollers. |
+| `GET /api/events-live` | **v0.8.1.** Server-side LIVE beginner-event feed. Fetches **all pages** of the `beginnerFriendly=true` SUPERSET (includes the `forBeginners` events; each occurrence carries **both** flags) near Boston from `calendarbeaf-prod.azurewebsites.net/api/events` for the **next-7-days** window, **RRULE-expands** recurring masters (`rrule`) into dated occurrences (one-offs included if in-window), normalizes + sorts ascending, and **caches ~15 min**. Success → `{ events:[…], live:true, window:{start,end} }`; **any failure → `{ events:[], live:false }`** (never throws). |
 | `POST /api/newbie` | Creates a newbie **and mints a device `token`**. AJAX callers (`Accept: application/json`) get `{ token }`; a plain no-JS POST redirects to `/?flash=thanks`. |
 | `POST /api/checkin` | Check-in. Accepts **either** `newbieId` **or** `token` (the with-token home's one-tap). JSON callers get `{ ok:true }`; plain posts redirect to `/events?flash=checkedin`. |
 | `POST /api/event/tt` | **v0.6.0** (admin-gated). Body `tt` = a TangoTiempo link or id → `fetchTangoTiempoEvent` → stores the event with the pulled fields. Redirects `/admin?flash=ttadded`, or `?flash=ttfail` when the fetch returns `null`. |
@@ -343,10 +383,11 @@ functions. **Organizers are the same inventory as teachers** — one list, two h
 poc/
 ├── app.js        # HTTP server + page templates + routes; exports requestListener
 ├── tangotiempo.js   # fetchTangoTiempoEvent(idOrUrl) — server-side TangoTiempo pull (v0.6.0, zero deps)
+├── eventsLive.js    # v0.8.1 LIVE feed: getLiveEvents() — fetch beginnerFriendly SUPERSET (both flags kept) + RRULE-expand (rrule) + 15-min cache + fallback
 ├── store.js         # the ONLY data layer — env-gated Firestore / local-JSON (async)
 ├── api/index.js     # Vercel serverless entrypoint (delegates to requestListener)
 ├── vercel.json      # Vercel rewrite → /api/index (assets/favicon excluded) + includeFiles seed
-├── package.json     # v0.7.1; firebase-admin dependency (used only when envs present)
+├── package.json     # v0.8.1; firebase-admin + rrule dependencies
 ├── data/db.json     # local JSON store (9 organizers + 9 lesson studios + 4 real TangoTiempo events w/ shortName/org/date/venue/icon + beginnerFriendly:true + meta; empty newbies/volunteers/messages/checkins)
 ├── assets/          # hero.png / icon.png slots (+ README)
 └── README.md        # this file

@@ -2,6 +2,14 @@
   "meta": {
     "updates": [
       {
+        "version": "0.8.1",
+        "note": "Events in 3 tiers: For beginners → A bit more adventurous (beginner-friendly) → Even more (tangotiempo.com)."
+      },
+      {
+        "version": "0.8.0",
+        "note": "Live beginner-event feed (next 7 days, forBeginners) from the MasterCalendar API with RRULE expansion; 'more' → tangotiempo.com."
+      },
+      {
         "version": "0.7.1",
         "note": "Events reframed to beginner-friendly only (‘ask your buddy’ for more); local /tmp store footgun fixed."
       },
