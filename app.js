@@ -235,56 +235,120 @@ function page(title, body, opts) {
   .soon .tease{display:inline-block;margin-top:10px;font-size:11.5px;font-weight:700;
     letter-spacing:.08em;text-transform:uppercase;color:var(--terra);background:#ffe3d0;
     border-radius:20px;padding:3px 11px}
-  /* shared site footer (primary nav — mobile-first, big tap targets) */
-  .sitefoot{margin-top:26px;border-top:1px solid var(--line);padding-top:18px}
-  .sitefoot .acts{display:flex;gap:12px;flex-wrap:wrap}
-  .sitefoot .acts a{flex:1 1 46%;min-width:150px;min-height:48px;display:flex;
+  /* footer link groups — shared by the bottom drawer + the no-JS fallback */
+  .acts{display:flex;gap:12px;flex-wrap:wrap}
+  .acts a{flex:1 1 46%;min-width:150px;min-height:48px;display:flex;
     align-items:center;justify-content:center;text-align:center;text-decoration:none;
     font-weight:800;font-size:16px;border-radius:14px;padding:13px 14px}
-  .sitefoot .acts a.buddy{background:var(--terra);color:#fff}
-  .sitefoot .acts a.buddy:active{background:var(--terra-d)}
-  .sitefoot .acts a.admin{background:#fff;color:var(--terra-d);border:1.5px solid var(--line)}
-  .sitefoot .meta{display:flex;gap:8px 14px;flex-wrap:wrap;align-items:center;
+  .acts a.buddy{background:var(--terra);color:#fff}
+  .acts a.buddy:active{background:var(--terra-d)}
+  .acts a.admin{background:#fff;color:var(--terra-d);border:1.5px solid var(--line)}
+  .meta{display:flex;gap:8px 14px;flex-wrap:wrap;align-items:center;
     justify-content:center;margin-top:16px;font-size:14px;color:var(--soft)}
-  .sitefoot .meta .ver{font-weight:800;color:var(--terra-d)}
-  .sitefoot .meta a{min-height:44px;display:inline-flex;align-items:center;
+  .meta .ver{font-weight:800;color:var(--terra-d)}
+  .meta a{min-height:44px;display:inline-flex;align-items:center;
     padding:6px 6px;font-weight:700;text-decoration:none;color:var(--terra-d)}
-  .sitefoot .meta .dot{color:var(--line)}
+  .meta .dot{color:var(--line)}
+  /* no-JS fallback footer (rendered only inside <noscript>) */
+  .sitefoot{margin-top:26px;border-top:1px solid var(--line);padding-top:18px}
+  /* ---- Bottom drawer / sheet (mobile-native) --------------------------------
+     Replaces the old static footer: a slim handle pinned to the bottom of the
+     viewport that slides a panel up. NOTE: these drawer links (Admin etc.) will
+     later be GATED/AUTHENTICATED — the handle stays public, the panel won't. */
+  body{padding-bottom:calc(64px + env(safe-area-inset-bottom))} /* room for the handle */
+  .tb-handle{
+    position:fixed;left:0;right:0;bottom:0;z-index:61;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    border:none;border-top:1px solid var(--line);
+    background:#fff;color:var(--terra-d);font-weight:800;font-size:15px;font-family:inherit;
+    padding:12px 14px calc(12px + env(safe-area-inset-bottom));min-height:48px;
+    box-shadow:0 -6px 20px rgba(158,63,39,.10);cursor:pointer;
+    transition:opacity .2s ease}
+  .tb-scrim{position:fixed;inset:0;z-index:62;background:rgba(42,26,18,.45);
+    opacity:0;pointer-events:none;transition:opacity .28s ease}
+  .tb-panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:63;background:#fff;
+    border-top-left-radius:20px;border-top-right-radius:20px;border-top:1px solid var(--line);
+    box-shadow:0 -14px 40px rgba(158,63,39,.18);max-height:80vh;overflow-y:auto;
+    padding:8px 18px calc(22px + env(safe-area-inset-bottom));
+    transform:translateY(100%);transition:transform .3s cubic-bezier(.32,.72,0,1)}
+  .tb-grip{width:44px;height:5px;border-radius:3px;background:var(--line);
+    margin:6px auto 14px;cursor:pointer}
+  .tb-drawer.open .tb-scrim{opacity:1;pointer-events:auto}
+  .tb-drawer.open .tb-panel{transform:translateY(0)}
+  .tb-drawer.open .tb-handle{opacity:0;pointer-events:none}
   @media(max-width:600px){.grid{grid-template-columns:1fr!important}}
 </style>
 </head>
 <body><div class="wrap">
 <div class="nav">
-  <a href="/">Learn tango</a>
+  <a href="/signup">Learn tango</a>
   <a href="/events">Events</a>
   <a href="/lessons">Lessons</a>
   <a href="/social">Social</a>
   <a href="/chat">Chat</a>
 </div>
 ${body}
-${siteFooter()}
-</div></body></html>`;
+</div>
+${bottomDrawer()}
+</body></html>`;
 }
 
-// Shared footer on EVERY page. Primary actions + a meta line. These links
+// Bottom drawer on EVERY page (replaces the old static footer). A slim handle is
+// pinned to the bottom of the viewport; tapping it slides a sheet up revealing the
+// links. Tapping the scrim / grip / Escape / swipe-down closes it. These links
 // (Be a buddy / Admin / Coming / More / Updates / Ideas / To-do) are the primary
-// nav for those pages and deliberately live ONLY here — they are not in the top
-// menu (the top nav is the clean newbie-facing set only).
-function siteFooter() {
-  return `<footer class="sitefoot">
-  <div class="acts">
-    <a class="buddy" href="/volunteer">Be a buddy</a>
-    <a class="admin" href="/admin">Admin</a>
-    <a class="admin" href="/coming">Coming</a>
-    <a class="admin" href="/more">More</a>
+// nav for those pages and deliberately live ONLY here — not in the top menu.
+// Progressive enhancement: the drawer is `hidden` until JS un-hides it, and a
+// <noscript> static footer keeps every link reachable when JS is off.
+// NOTE: this drawer will later be GATED/AUTHENTICATED (the handle stays public,
+// the panel contents become operator-only).
+function bottomDrawer() {
+  const links = `
+    <div class="acts">
+      <a class="buddy" href="/volunteer">Be a buddy</a>
+      <a class="admin" href="/admin">Admin</a>
+      <a class="admin" href="/coming">Coming</a>
+      <a class="admin" href="/more">More</a>
+    </div>
+    <div class="meta">
+      <span class="ver">Tango Buddy v${esc(VERSION)}</span>
+      <span class="dot">·</span><a href="/updates">Updates</a>
+      <span class="dot">·</span><a href="/ideas">Ideas</a>
+      <span class="dot">·</span><a href="/todo">To-do</a>
+    </div>`;
+  return `<div class="tb-drawer" id="tb-drawer" hidden>
+  <div class="tb-scrim" id="tb-scrim"></div>
+  <button type="button" class="tb-handle" id="tb-handle" aria-expanded="false" aria-controls="tb-panel">≡ More</button>
+  <div class="tb-panel" id="tb-panel" role="dialog" aria-modal="false" aria-label="More links">
+    <div class="tb-grip" id="tb-grip" title="Close" aria-hidden="true"></div>
+    ${links}
   </div>
-  <div class="meta">
-    <span class="ver">Tango Buddy v${esc(VERSION)}</span>
-    <span class="dot">·</span><a href="/updates">Updates</a>
-    <span class="dot">·</span><a href="/ideas">Ideas</a>
-    <span class="dot">·</span><a href="/todo">To-do</a>
-  </div>
-</footer>`;
+</div>
+<noscript><div class="wrap"><footer class="sitefoot">${links}</footer></div></noscript>
+<script>
+(function(){
+  var d=document.getElementById('tb-drawer'); if(!d) return;
+  d.hidden=false; // progressive enhancement: only show the JS drawer when JS runs
+  var handle=document.getElementById('tb-handle');
+  var scrim=document.getElementById('tb-scrim');
+  var grip=document.getElementById('tb-grip');
+  var panel=document.getElementById('tb-panel');
+  function open(){d.classList.add('open');handle.setAttribute('aria-expanded','true');}
+  function close(){d.classList.remove('open');handle.setAttribute('aria-expanded','false');}
+  handle.addEventListener('click',open);
+  scrim.addEventListener('click',close);
+  grip.addEventListener('click',close);
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
+  // swipe-down on the panel to dismiss
+  var y0=null;
+  panel.addEventListener('touchstart',function(e){y0=e.touches[0].clientY;},{passive:true});
+  panel.addEventListener('touchend',function(e){
+    if(y0==null)return; var dy=e.changedTouches[0].clientY-y0; y0=null;
+    if(dy>60&&panel.scrollTop<=0)close();
+  },{passive:true});
+})();
+</script>`;
 }
 
 // Hero block: <img> that hides itself if /assets/hero.png is missing, revealing
@@ -296,14 +360,18 @@ function heroBlock() {
   </div>`;
 }
 
-/* ---------- page: newbie capture (GET /) ------------------------------------ */
+/* ---------- page: newbie capture / sign-up (GET /signup) --------------------- */
+/* v0.7.0 — the QR target. The exact hero copy is preserved. On a successful
+ * AJAX sign-up the client saves tb_token, shows a thank-you, then goes to "/"
+ * (the smart router renders their home). No-JS falls back to a plain POST that
+ * redirects here with ?flash=thanks (a server-rendered thank-you card). */
 
-function newbiePage(flash) {
+function signupPage(flash) {
   const platforms = ['Instagram', 'Facebook', 'WhatsApp', 'Phone', 'Email', 'Other'];
   const options = platforms.map((p) => `<option value="${p}">${p}</option>`).join('');
   // Server-rendered thank-you ONLY for the no-JS fallback (a plain POST redirects
   // here with ?flash=thanks). With JS, the client shows its own thank-you screen
-  // and then the with-token home — see landingScript() below.
+  // then routes to "/" — see signupScript() below.
   const thanks = flash === 'thanks'
     ? `<div class="card" style="text-align:center">
          <div class="big">💃🕺</div>
@@ -312,11 +380,6 @@ function newbiePage(flash) {
          <b>free first lesson</b>. Keep this on your phone — next time you visit, you'll see
          what's happening.</p>
        </div>` : '';
-  // Three client-swapped regions live inside one URL ("/"). Default = the capture
-  // form (#tb-capture). If the device already has a tb_token, the client hides the
-  // form and renders the with-token home (#tb-home). Right after a fresh sign-up it
-  // shows the thank-you (#tb-thanks) first. All progressive-enhancement: no JS still
-  // works via the plain form POST + server ?flash=thanks card above.
   return page('Boston Tango Buddies', `
     <div id="tb-capture">
       <span class="badge">Boston Tango</span>
@@ -367,29 +430,124 @@ function newbiePage(flash) {
       <p class="foot">Tango Buddy · Boston · a friendly free invitation, nothing more.</p>
     </div>
     <div id="tb-thanks" hidden></div>
-    <div id="tb-home" hidden></div>
-    ${landingScript()}
+    ${signupScript()}
   `);
 }
 
-/* Client script for the split landing (Task 2/3/4). No token -> the capture form
- * (server-rendered, visible by default). Submitting -> AJAX POST /api/newbie ->
- * store {token} in localStorage(tb_token) -> thank-you -> with-token home (Events
- * + one-tap check-in via the token, check-in history, quiet links, Bring-a-buddy).
- * All zero-dependency vanilla JS. */
-function landingScript() {
+/* Client script for /signup. Submit -> AJAX POST /api/newbie -> save the minted
+ * token to localStorage(tb_token) -> thank-you screen -> "See what's happening"
+ * links to "/" (the smart router then renders the with-token home). No-JS falls
+ * back to the plain form POST + ?flash=thanks card. Zero-dependency vanilla JS. */
+function signupScript() {
   return `<script>
 (function(){
   var LSK='tb_token';
   var cap=document.getElementById('tb-capture');
   var thx=document.getElementById('tb-thanks');
-  var home=document.getElementById('tb-home');
   var form=cap?cap.querySelector('form'):null;
+  function show(el){if(el)el.hidden=false;} function hide(el){if(el)el.hidden=true;}
+  function setToken(t){try{localStorage.setItem(LSK,t);}catch(e){}}
+  function shareBtnHtml(){
+    return '<button type="button" class="submit" id="tb-share" '+
+      'style="background:#fff;color:var(--terra-d);border:1.5px solid var(--line)">Bring a buddy</button>';
+  }
+  function wireShare(){
+    var b=document.getElementById('tb-share'); if(!b) return;
+    b.addEventListener('click',function(){
+      var url=location.origin+'/signup';
+      var data={title:'Boston Tango Buddies',
+        text:'Come learn tango with me — Boston Tango Buddies.',url:url};
+      if(navigator.share){navigator.share(data).catch(function(){});return;}
+      function done(){var t=b.textContent;b.textContent='link copied ✓';
+        setTimeout(function(){b.textContent=t;},2000);}
+      if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(url).then(done).catch(function(){prompt('Copy this link:',url);});
+      }else{prompt('Copy this link:',url);}
+    });
+  }
+  function showThanks(){
+    hide(cap);
+    thx.innerHTML='<span class="badge">Boston Tango</span>'
+      +'<div class="card" style="text-align:center"><div class="big">💃🕺</div>'
+      +'<h1>You\\'re in!</h1>'
+      +'<p class="lede">We\\'ll pair you with a buddy and set up your free first lesson. '
+      +'Keep this on your phone — next time you visit, you\\'ll see what\\'s happening.</p>'
+      +shareBtnHtml()
+      +'<p class="foot" style="margin-top:16px"><a href="/" id="tb-continue">See what\\'s happening →</a></p></div>';
+    show(thx);wireShare();
+    try{window.scrollTo(0,0);}catch(e){}
+  }
+  if(form){
+    form.addEventListener('submit',function(ev){
+      ev.preventDefault();
+      var body=new URLSearchParams(new FormData(form)).toString();
+      fetch('/api/newbie',{method:'POST',
+        headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
+        body:body})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(d&&d.token){setToken(d.token);showThanks();}
+          else{location.href='/signup?flash=thanks';}
+        }).catch(function(){form.submit();});
+    });
+  }
+})();
+</script>`;
+}
+
+/* ---------- page: no-cookie welcome (GET /welcome) -------------------------- */
+/* v0.7.0 — a warm intro for someone who lands WITHOUT a token (the smart router
+ * at "/" sends no-token devices here). No money words. Get started -> /signup. */
+
+function welcomePage() {
+  return page('Boston Tango Buddies', `
+    <span class="badge">Boston Tango</span>
+    <h1>Welcome to <span class="accent">Boston Tango Buddies</span></h1>
+    <p class="lede">We pair newcomers with a buddy — someone to learn tango beside you — and a
+      free first lesson, so nobody learns alone.</p>
+    ${heroBlock()}
+    <div class="card">
+      <p class="promise">We're tango dancers who still remember the first-night nerves.
+        Come dance with us: a friendly face, a place to start, and someone in your corner
+        from your very first step to the milonga floor.</p>
+      <a class="submit" href="/signup" style="display:block;text-align:center;text-decoration:none">Get started</a>
+      <p class="foot" style="margin-top:16px">Been here before? Your phone should remember you —
+        if it doesn't, just <a href="/signup">sign up again</a>.</p>
+    </div>
+    <p class="foot">Tango Buddy · Boston · a friendly free invitation, nothing more.</p>
+  `);
+}
+
+/* ---------- page: smart router (GET /) -------------------------------------- */
+/* v0.7.0 — a tiny client-side shell. NEVER shows the signup form. It reads
+ * localStorage.tb_token: has a token -> render the returning HOME (Welcome back
+ * + Events one-tap check-in + history + quiet links); no token -> replace the
+ * location with /welcome. <noscript> falls back to a /welcome link. */
+
+function rootShell() {
+  return page('Boston Tango Buddies', `
+    <div id="tb-home" hidden></div>
+    <noscript>
+      <div class="card" style="text-align:center">
+        <p class="lede" style="margin-bottom:8px">Welcome to Boston Tango Buddies.</p>
+        <p><a href="/welcome">Continue →</a></p>
+      </div>
+    </noscript>
+    ${homeShellScript()}
+  `);
+}
+
+/* Client script for "/". Reuses the with-token home (fetches /api/me?token=…).
+ * No token -> location.replace('/welcome'). Unknown token -> clear + /welcome.
+ * Zero-dependency vanilla JS. */
+function homeShellScript() {
+  return `<script>
+(function(){
+  var LSK='tb_token';
+  var home=document.getElementById('tb-home');
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  function show(el){if(el)el.hidden=false;} function hide(el){if(el)el.hidden=true;}
   function getToken(){try{return localStorage.getItem(LSK);}catch(e){return null;}}
-  function setToken(t){try{localStorage.setItem(LSK,t);}catch(e){}}
   function clearToken(){try{localStorage.removeItem(LSK);}catch(e){}}
   function prettyDate(d){try{var x=(''+d).indexOf('T')>-1?new Date(d):new Date(d+'T00:00:00');
     if(isNaN(x))return d;
@@ -402,7 +560,7 @@ function landingScript() {
   function wireShare(){
     var b=document.getElementById('tb-share'); if(!b) return;
     b.addEventListener('click',function(){
-      var url=location.origin+'/';
+      var url=location.origin+'/signup';
       var data={title:'Boston Tango Buddies',
         text:'Come learn tango with me — Boston Tango Buddies.',url:url};
       if(navigator.share){navigator.share(data).catch(function(){});return;}
@@ -472,44 +630,15 @@ function landingScript() {
     fetch('/api/me?token='+encodeURIComponent(token),{headers:{'Accept':'application/json'}})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
-        if(!d||!d.newbie){clearToken();hide(thx);hide(home);show(cap);return;}
-        hide(cap);hide(thx);show(home);renderHome(d);
+        if(!d||!d.newbie){clearToken();location.replace('/welcome');return;}
+        home.hidden=false;renderHome(d);
         try{window.scrollTo(0,0);}catch(e){}
-      }).catch(function(){hide(home);hide(thx);show(cap);});
-  }
-
-  function showThanks(token){
-    hide(cap);hide(home);
-    thx.innerHTML='<span class="badge">Boston Tango</span>'
-      +'<div class="card" style="text-align:center"><div class="big">💃🕺</div>'
-      +'<h1>You\\'re in!</h1>'
-      +'<p class="lede">We\\'ll pair you with a buddy and set up your free first lesson. '
-      +'Keep this on your phone — next time you visit, you\\'ll see what\\'s happening.</p>'
-      +shareBtnHtml()
-      +'<p class="foot" style="margin-top:16px"><a href="#" id="tb-continue">See what\\'s happening →</a></p></div>';
-    show(thx);wireShare();
-    var cont=document.getElementById('tb-continue');
-    if(cont)cont.addEventListener('click',function(e){e.preventDefault();loadHome(token);});
-    try{window.scrollTo(0,0);}catch(e){}
-  }
-
-  if(form){
-    form.addEventListener('submit',function(ev){
-      ev.preventDefault();
-      var body=new URLSearchParams(new FormData(form)).toString();
-      fetch('/api/newbie',{method:'POST',
-        headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
-        body:body})
-        .then(function(r){return r.json();})
-        .then(function(d){
-          if(d&&d.token){setToken(d.token);showThanks(d.token);}
-          else{location.href='/?flash=thanks';}
-        }).catch(function(){form.submit();});
-    });
+      }).catch(function(){location.replace('/welcome');});
   }
 
   var tok=getToken();
-  if(tok){loadHome(tok);}
+  if(!tok){location.replace('/welcome');return;}
+  loadHome(tok);
 })();
 </script>`;
 }
@@ -627,7 +756,12 @@ function prettyDateTime(iso) {
 }
 
 async function eventsPage(flash) {
-  const events = await store.listEvents();
+  // BEGINNER-FRIENDLY ONLY: the /events tab shows beginner-friendly events; the
+  // buddy is the door to everything else. Manual-curation-wins: the seeded events
+  // are Toby's hand-picked beginner links, so a missing/unknown flag defaults to
+  // TRUE — we only hide an event whose flag is EXPLICITLY false. When in doubt,
+  // show (never let the filter empty the page).
+  const events = (await store.listEvents()).filter((ev) => ev.beginnerFriendly !== false);
 
   const thanks = flash === 'checkedin'
     ? `<p class="promise"><b>Got it — see you on the dance floor!</b> Your check-in is saved.
@@ -668,9 +802,9 @@ async function eventsPage(flash) {
 
   return page('Boston Tango Events', `
     <span class="badge">Boston Tango · Events</span>
-    <h1>What's <span class="accent">happening near you</span></h1>
-    <p class="lede">Milongas, practicas, classes and socials around Boston, connected via TangoTiempo.
-      Find a night that feels right, bring your buddy, and tap a card for the details.</p>
+    <h1><span class="accent">Beginner-friendly</span> nights</h1>
+    <p class="lede">These are the events made for newcomers — come as you are. Want more than this?
+      <b style="color:var(--terra-d)">Ask your buddy.</b></p>
     ${heroBlock()}
     ${thanks}
     ${cards}
@@ -777,7 +911,7 @@ async function adminPage(flash) {
       <td>${readyPill}${readyForm}${handoverControl}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="10" class="empty">No newbies captured yet. Try the
-      <a href="/">sign-up page</a>.</td></tr>`;
+      <a href="/signup">sign-up page</a>.</td></tr>`;
 
   const volRows = volunteers.length ? volunteers.map((v) => {
     const matched = newbies.filter((n) => n.buddyId === v.id).length;
@@ -1282,7 +1416,9 @@ async function requestListener(req, res) {
   try {
     // --- GET routes ---
     if (req.method === 'GET') {
-      if (pathname === '/') return send(res, 200, newbiePage(url.searchParams.get('flash')));
+      if (pathname === '/') return send(res, 200, rootShell());
+      if (pathname === '/signup') return send(res, 200, signupPage(url.searchParams.get('flash')));
+      if (pathname === '/welcome') return send(res, 200, welcomePage());
       if (pathname === '/volunteer') return send(res, 200, volunteerPage(url.searchParams.get('flash')));
       if (pathname === '/lessons') return send(res, 200, await lessonsPage());
       // Organizers are no longer a public browse page — they live on events (and
@@ -1378,7 +1514,7 @@ async function requestListener(req, res) {
         if ((req.headers.accept || '').includes('application/json')) {
           return sendJson(res, 200, { token: newbie.token });
         }
-        return redirect(res, '/?flash=thanks');
+        return redirect(res, '/signup?flash=thanks');
       }
       if (pathname === '/api/volunteer') {
         await store.addVolunteer(body);
@@ -1484,7 +1620,7 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`Tango Buddy POC running -> http://localhost:${PORT}`);
     console.log(`Store backend: ${store.USE_FIRESTORE ? 'Firestore (firebase-admin)' : 'local JSON (data/db.json)'}`);
-    console.log('Routes: /  /volunteer  /lessons  /events  /more  /admin   (Ctrl-C to stop)');
+    console.log('Routes: /  /signup  /welcome  /volunteer  /lessons  /events  /more  /admin   (Ctrl-C to stop)');
   });
 }
 

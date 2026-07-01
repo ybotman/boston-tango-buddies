@@ -2,6 +2,14 @@
   "meta": {
     "updates": [
       {
+        "version": "0.7.1",
+        "note": "Events reframed to beginner-friendly only (‘ask your buddy’ for more); local /tmp store footgun fixed."
+      },
+      {
+        "version": "0.7.0",
+        "note": "/signup (QR target) + /welcome (no-cookie) + smart / router (home vs welcome); footer became a bottom drawer."
+      },
+      {
         "version": "0.6.0",
         "note": "TangoTiempo event integration: paste a link, auto-pull shortName + organizer + date + venue + icon; live event cards deep-link to TangoTiempo."
       },
@@ -118,6 +126,7 @@
       "organizerId": null,
       "link": "https://tangotiempo.com/event/6a1883797cb1491a22db39b1",
       "source": "TangoTiempo",
+      "beginnerFriendly": true,
       "demo": false,
       "createdAt": "2026-07-01T12:00:00.000Z"
     },
@@ -139,6 +148,7 @@
       "organizerId": null,
       "link": "https://tangotiempo.com/event/6a315655bebead338cfa9064",
       "source": "TangoTiempo",
+      "beginnerFriendly": true,
       "demo": false,
       "createdAt": "2026-07-01T12:00:00.000Z"
     },
@@ -160,6 +170,7 @@
       "organizerId": null,
       "link": "https://tangotiempo.com/event/68533227a1e3cfb6f8bbb117",
       "source": "TangoTiempo",
+      "beginnerFriendly": true,
       "demo": false,
       "createdAt": "2026-07-01T12:00:00.000Z"
     },
@@ -181,6 +192,7 @@
       "organizerId": null,
       "link": "https://tangotiempo.com/event/69c431cb450fa27d289e5087",
       "source": "TangoTiempo",
+      "beginnerFriendly": true,
       "demo": false,
       "createdAt": "2026-07-01T12:00:00.000Z"
     }

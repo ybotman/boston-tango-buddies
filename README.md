@@ -7,6 +7,42 @@ buddy**, and let an operator **hand-match** them — plus a **Lessons** tab of r
 Boston studios, a public **events** listing with **check-in**, and a **studio
 handover** that connects the community layer to the lessons layer.
 
+> **v0.7.1 — events = beginner-friendly only + local `/tmp` store footgun fixed.**
+> The `/events` tab now shows **beginner-friendly events only** — the buddy is the
+> door to everything else. Copy is reframed to a warm beginner heading
+> ("**Beginner-friendly nights**" + "These are the events made for newcomers — come
+> as you are. Want more than this? **Ask your buddy.**"), money-free. The
+> TangoTiempo fetch helper (`tangotiempo.js`) now reads the API's
+> `beginnerFriendly` / `forBeginners` (+ `…Override`) flags and computes **one
+> normalized `beginnerFriendly` boolean** (overrides win when present; any
+> for/friendly flag true ⇒ true), stored on each event by `store.js`
+> (`addEvent`/`updateEvent`, both backends). `/events` filters to
+> `beginnerFriendly !== false` — **manual-curation-wins**: a missing/unknown flag
+> defaults to **shown**, so the 4 hand-picked seed events (all seeded
+> `beginnerFriendly: true`) stay visible and the filter never empties the page.
+> **Store footgun fix:** the `/tmp/db.json` read-preference AND write-redirect are
+> now **`VERCEL`-gated** — they run **only** when `process.env.VERCEL` is set. In
+> local dev (no `VERCEL`) reads and writes use `data/db.json` **exclusively**, never
+> `/tmp`, so local testing can't be shadowed/corrupted by a stale `/tmp/db.json`.
+> Vercel behavior (read-only FS → `/tmp`) is unchanged.
+
+> **v0.7.0 — landing/routing split + bottom-drawer footer.** The old client-side
+> token-split at `/` is now **three distinct routes**. **`/signup`** is the
+> **capture form** (the **QR target**) — same hero copy ("Thanks for scanning.
+> Want to learn tango?"), same `POST /api/newbie` token mint; on success the client
+> saves `tb_token` and routes to `/`. **`/welcome`** is a warm **no-cookie intro**
+> (money-free) for someone landing without a token — a **Get started** button →
+> `/signup` plus a returner line. **`/`** is now a tiny **smart router shell** that
+> **never shows the signup form**: it reads `localStorage.tb_token` and either
+> renders the returning **home** (Welcome back + Events one-tap check-in + history +
+> quiet links) or `location.replace('/welcome')` (with a `<noscript>` link to
+> `/welcome`). The static footer became a **bottom drawer / sheet**: a slim handle
+> pinned to the bottom of the viewport slides a panel up (scrim + swipe-down/grip/
+> Esc to close) holding **Be a buddy · Admin · Coming · More** + the meta line
+> **Tango Buddy v0.7.0 · Updates · Ideas · To-do**. Mobile-first, safe-area aware,
+> progressive-enhancement (`<noscript>` static footer). The top nav's **Learn tango**
+> now points at `/signup`. _(The drawer will later be gated/authenticated.)_
+
 > **v0.6.0 — TangoTiempo event integration.** Events are now **pulled from
 > TangoTiempo**. A tiny server-side helper `fetchTangoTiempoEvent(idOrUrl)`
 > (`tangotiempo.js`, zero deps — Node 18+ global `fetch`) accepts a full
@@ -58,11 +94,13 @@ active store backend (`local JSON` vs `Firestore`).
 
 | Route         | What it is                                                              |
 |---------------|-------------------------------------------------------------------------|
-| `GET /`       | **Token split-landing** (V1.2). **No `tb_token` on the device →** the **newbie capture** form — warm invite. Name, contact, platform, **"How did you find us?" (origination)**, note, required consent. On submit → AJAX `POST /api/newbie` mints a device **token** (saved to `localStorage.tb_token`), a **thank-you** screen shows, then the **with-token home**. **Has `tb_token` →** the **with-token home**: "Welcome back, &lt;name&gt;" + upcoming **Events with one-tap check-in** (token-based, no dropdown) + their check-in history + quiet links to buddy chat & the social feed + a **Bring a buddy** share + "Not you? Start over". |
+| `GET /`       | **Smart router shell (v0.7.0)** — a tiny client-side shell that **never shows the signup form**. Reads `localStorage.tb_token`: **has token →** renders the returning **home** (`GET /api/me?token=…`): "Welcome back, &lt;name&gt;" + upcoming **Events with one-tap check-in** (token-based, no dropdown) + check-in history + quiet links to buddy chat & the social feed + a **Bring a buddy** share + "Not you? Start over". **No token →** `location.replace('/welcome')`. `<noscript>` falls back to a `/welcome` link. |
+| `GET /signup` | **Newbie capture form (v0.7.0 — the QR target).** Same hero copy ("Thanks for scanning. Want to learn tango?" + the free-first-lesson/tango-buddy promise). Name, contact, platform, **"How did you find us?" (origination)**, note, required consent. On submit → AJAX `POST /api/newbie` mints a device **token** (saved to `localStorage.tb_token`), a **thank-you** screen shows, then a link routes to `/` (which renders the home). No-JS falls back to a plain POST → `/signup?flash=thanks` card. |
+| `GET /welcome`| **No-cookie welcome (v0.7.0).** A warm, money-free intro for someone landing **without a token** (the `/` router sends them here). Who we are (buddy + free first lesson, nobody learns alone), a primary **Get started** button → `/signup`, and a quieter returner line ("Been here before? Your phone should remember you — if it doesn't, just sign up again"). Keeps the BTB hero. |
 | `GET /api/me?token=…` | Returns `{ newbie:{id,name,status}, events:[…], checkins:[…] }` for the with-token home. 404 if the token is unknown (client then clears it and shows the form). |
 | `GET /manifest.webmanifest` | PWA **add-to-home-screen** manifest (name "Boston Tango Buddies", short_name "Tango Buddies", `display:standalone`, warm theme/background, `start_url:"/"`, icons → `/assets/icon.png`). `application/manifest+json`. |
 | `GET /volunteer` | **Volunteer (buddy) capture** — the other side. Name, contact, Boston area, availability, note. → `POST /api/volunteer` |
-| `GET /events`    | **Events** — public "what's happening near you" listing. **v0.6.0:** 4 **real** TangoTiempo events shown as **mobile-first cards** — a rounded **icon** (hidden when absent, e.g. event 685332), **shortName** (bold) then the **organizer** name, a pretty date + category pill + venue. The **whole card deep-links to its TangoTiempo event page** (`target="_blank"`). Data is pulled via `fetchTangoTiempoEvent` and stored by `store.js`. |
+| `GET /events`    | **Events — beginner-friendly only (v0.7.1).** Public listing reframed for newcomers ("**Beginner-friendly nights**" + "Ask your buddy" for more). Shows only events where `beginnerFriendly !== false` (**manual-curation-wins:** missing/unknown ⇒ shown, so the 4 curated seed events stay visible). **v0.6.0:** 4 **real** TangoTiempo events as **mobile-first cards** — a rounded **icon** (hidden when absent, e.g. event 685332), **shortName** (bold) then the **organizer** name, a pretty date + category pill + venue. The **whole card deep-links to its TangoTiempo event page** (`target="_blank"`). Data is pulled via `fetchTangoTiempoEvent` (which also computes the normalized `beginnerFriendly` flag) and stored by `store.js`. |
 | `GET /lessons`  | **Lessons tab (v0.5.0)** — the 9 **real** Boston teaching studios (Alla Tango, Blue Tango, Foundry/Roger Wood, Queer Tango Boston, Tango Academy of Boston, Tango Affair, Tango Society of Boston, Tango Spark, Ultimate Tango) as mobile cards. Each card: studio name + a **Call** button (`tel:`, only if a phone exists) + a **Website** button (opens in a new tab, only if a web exists). Warm, money-free intro. This is the **studios/teachers** collection — SEPARATE from the event **organizers**. The newbie "I want lessons" intent (with-token home) links here. |
 | `GET /teachers`  | **302-redirects to `/lessons`** (v0.5.0). Organizers are no longer a public browse page — they live on events and stay manageable in `/admin`. |
 | `GET /more`      | **v0.4.0 — More.** Two warm outbound links (open in a new tab): **Boston Tango Calendar** (bostontangocalendar.com) and **TangoTiempo** (tangotiempo.com, national). Linked from the **footer**. Money-free. |
@@ -99,40 +137,52 @@ The `/coming` page describes future features purely as **experiences** ("one car
 tango across the city"). It intentionally contains **no money language** — no pricing,
 payments, payouts, revenue, cost, fees, or "$" — anywhere on the page or in the app.
 
-### Footer (the primary nav) + version
+### Footer → bottom drawer (the primary nav) + version
 
-Every page renders one **shared footer** (mobile-first, ~44px+ tap targets, wraps
-cleanly on a narrow phone):
+**v0.7.0 — the footer is now a bottom drawer / sheet.** Every page pins a slim
+**handle** ("≡ More") to the bottom of the viewport; tapping it **slides a panel up**
+from the bottom (semi-transparent **scrim** behind, close via scrim tap / grip /
+**Escape** / **swipe-down**). Mobile-first: full-width, large tap targets, a smooth
+CSS `transform` transition, and **safe-area-inset** aware. It's progressive
+enhancement — the drawer is `hidden` until vanilla JS un-hides it, and a
+`<noscript>` static footer keeps every link reachable with JS off. _(The drawer
+contents will later be **gated/authenticated**; a code comment marks this.)_
+
+Drawer contents (mobile-first, ~48px tap targets):
 
 - **Primary actions:** **Be a buddy** (→ `/volunteer`) · **Admin** (→ `/admin`) ·
   **Coming** (→ `/coming`) · **More** (→ `/more`)
-- **Meta line:** **Tango Buddy v0.6.0** · **Updates** (→ `/updates`) · **Ideas**
+- **Meta line:** **Tango Buddy v0.7.0** · **Updates** (→ `/updates`) · **Ideas**
   (→ `/ideas`) · **To-do** (→ `/todo`)
 
-**v0.5.4 — slimmed top nav:** the top navigation is now the clean **newbie-facing**
+**v0.5.4 — slimmed top nav (kept):** the top navigation is the clean **newbie-facing**
 set only (**Learn tango** · **Events** · **Lessons** · **Social** · **Chat**).
-**Be a buddy**, **Admin** and **Coming** were removed from the top nav and live
-**footer-only** now (the routes `/volunteer`, `/admin`, `/coming` all still work).
-The footer is the **only** way to reach the meta pages — they are deliberately
-**not in the top menu**. The version string is read once from
+**v0.7.0:** **Learn tango** now points at **`/signup`** (nothing links to the old
+`/` form). **Be a buddy**, **Admin** and **Coming** live **drawer-only** now (the
+routes `/volunteer`, `/admin`, `/coming` all still work). The drawer is the **only**
+way to reach the meta pages — deliberately **not in the top menu**. The version
+string is read once from
 `package.json` at startup (`require('./package.json').version`) — **no dependency**,
 one semver source of truth (bump `package.json` → footer updates).
 
-### Token device-landing — the light, no-login identity (V1.2)
+### Token device-landing — the light, no-login identity (v0.7.0 route split)
 
 There is still **no login**. Instead, `POST /api/newbie` mints a random **device
-token**; the client saves it to `localStorage` as **`tb_token`**. On every `/` load a
-tiny vanilla-JS script decides which of three regions to show inside the one URL:
+token**; the client saves it to `localStorage` as **`tb_token`**. **v0.7.0** splits
+the old one-URL landing into **three routes**:
 
-1. **No token → the 1× capture form** (server-rendered, visible by default — works
-   even with JS off via a plain form POST + a `?flash=thanks` card).
-2. **Fresh sign-up → a warm thank-you** ("You're in! …keep this on your phone…"),
-   then a tap into the home.
-3. **Has token → the with-token home** — fetches `GET /api/me?token=…` and renders
-   "Welcome back, &lt;name&gt;", upcoming **Events with one-tap check-in** (posts the
-   token, no dropdown), the newbie's **check-in history**, quiet links to their
-   **buddy chat** + the **social feed**, and a **Bring a buddy** share. A **"Not you?
-   Start over"** link clears `tb_token`.
+1. **`/signup` → the capture form** (the QR target). Submitting mints the token,
+   saves it, shows a **thank-you** ("You're in! …keep this on your phone…"), then
+   links to `/`. No-JS falls back to a plain POST + `/signup?flash=thanks` card.
+2. **`/welcome` → the no-cookie intro** for a token-less device (money-free; **Get
+   started** → `/signup`).
+3. **`/` → the smart router shell** (never shows the form). **Has token →** the
+   **with-token home** — fetches `GET /api/me?token=…` and renders "Welcome back,
+   &lt;name&gt;", upcoming **Events with one-tap check-in** (posts the token, no
+   dropdown), the newbie's **check-in history**, quiet links to their **buddy chat**
+   + the **social feed**, and a **Bring a buddy** share. A **"Not you? Start over"**
+   link clears `tb_token` (→ back through `/` → `/welcome`). **No token →**
+   `location.replace('/welcome')`.
 
 Token plumbing lives in `store.js` (`addNewbie` mints `newbie.token`;
 `findNewbieByToken(token)` resolves it back) — the store stays the single data layer.
@@ -296,8 +346,8 @@ poc/
 ├── store.js         # the ONLY data layer — env-gated Firestore / local-JSON (async)
 ├── api/index.js     # Vercel serverless entrypoint (delegates to requestListener)
 ├── vercel.json      # Vercel rewrite → /api/index (assets/favicon excluded) + includeFiles seed
-├── package.json     # v0.6.0; firebase-admin dependency (used only when envs present)
-├── data/db.json     # local JSON store (9 organizers + 9 lesson studios + 4 real TangoTiempo events w/ shortName/org/date/venue/icon + meta; empty newbies/volunteers/messages/checkins)
+├── package.json     # v0.7.1; firebase-admin dependency (used only when envs present)
+├── data/db.json     # local JSON store (9 organizers + 9 lesson studios + 4 real TangoTiempo events w/ shortName/org/date/venue/icon + beginnerFriendly:true + meta; empty newbies/volunteers/messages/checkins)
 ├── assets/          # hero.png / icon.png slots (+ README)
 └── README.md        # this file
 ```

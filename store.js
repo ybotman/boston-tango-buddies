@@ -42,7 +42,7 @@
  *   thread    { id, kind, newbieId, createdAt }   kind: 'buddy' | 'social'
  *   message   { id, threadId, fromName, body, createdAt }
  *   event     { id, ttId, url, shortName, orgName, startDate, venueName, category, image,
- *               title, type, date, time, location, organizerId, link, source, demo, createdAt }
+ *               beginnerFriendly, title, type, date, time, location, organizerId, link, source, demo, createdAt }
  *               (ttId/url/shortName/orgName/startDate/venueName/category/image are the
  *                TangoTiempo-pulled fields; title/type/date/time/location remain for
  *                legacy/manual events + the token-home landing.)
@@ -89,27 +89,27 @@ function id(prefix) {
 const JSON_KEYS = { organizers: 'teachers' };
 function jkey(coll) { return JSON_KEYS[coll] || coll; }
 
-// Decide (once, cached) where writes go. Never write to DB_PATH on Vercel — its
-// filesystem is read-only. Off Vercel, write to DB_PATH exactly as before, unless
-// it happens to be non-writable (then fall back to /tmp too).
+// Decide (once, cached) where writes go. The /tmp redirect is a VERCEL-ONLY
+// concern: on Vercel the project filesystem is read-only, so we write to /tmp.
+// In local dev (no VERCEL env) we ALWAYS write to data/db.json — never /tmp —
+// so local testing is safe and deterministic and can't be shadowed by a stale
+// /tmp/db.json.
 let _writePath = null;
 function writePath() {
   if (_writePath) return _writePath;
-  if (ON_VERCEL) { _writePath = TMP_PATH; return _writePath; }
-  try {
-    fs.accessSync(DB_PATH, fs.constants.W_OK);
-    _writePath = DB_PATH;
-  } catch (e) {
-    _writePath = TMP_PATH;
-  }
+  _writePath = ON_VERCEL ? TMP_PATH : DB_PATH;
   return _writePath;
 }
 
 function readFile() {
   let raw = null;
-  // Prefer a writable copy in /tmp if one exists (a warm Vercel instance that has
-  // already taken a write); otherwise read the bundled seed at DB_PATH.
-  try { raw = fs.readFileSync(TMP_PATH, 'utf8'); } catch (e) { raw = null; }
+  // /tmp is a VERCEL-ONLY read preference: on a warm Vercel instance a prior write
+  // lands in /tmp, so prefer it there. In local dev (no VERCEL) we NEVER touch
+  // /tmp — reads come straight from data/db.json (the real seed), so a stale
+  // /tmp/db.json can never shadow it.
+  if (ON_VERCEL) {
+    try { raw = fs.readFileSync(TMP_PATH, 'utf8'); } catch (e) { raw = null; }
+  }
   if (raw == null) {
     try { raw = fs.readFileSync(DB_PATH, 'utf8'); } catch (e) { raw = null; }
   }
@@ -373,6 +373,9 @@ async function addEvent(data) {
     // link deep-links to TangoTiempo; default to the pulled url when present.
     link: (data.link || data.url || '').trim(),
     source: (data.source || '').trim(),
+    // Normalized beginner-friendly flag (computed in tangotiempo.js from the API's
+    // for/friendly flags + overrides). Drives the /events beginner-only filter.
+    beginnerFriendly: data.beginnerFriendly === true || data.beginnerFriendly === 'true',
     demo: data.demo === true || data.demo === 'true',
     createdAt: new Date().toISOString(),
   };
@@ -390,6 +393,9 @@ async function updateEvent(eventId, data) {
   if (data.organizerId !== undefined) event.organizerId = String(data.organizerId).trim() || null;
   if (data.ttId !== undefined) event.ttId = String(data.ttId).trim() || null;
   if (data.image !== undefined) event.image = data.image ? String(data.image).trim() : null;
+  if (data.beginnerFriendly !== undefined) {
+    event.beginnerFriendly = data.beginnerFriendly === true || data.beginnerFriendly === 'true';
+  }
   await backend.set('events', event.id, event);
   return event;
 }

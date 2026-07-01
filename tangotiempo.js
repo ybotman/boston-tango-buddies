@@ -15,6 +15,23 @@
 
 const HEX24 = /[0-9a-fA-F]{24}/;
 
+// Loosely coerce an API flag to boolean (handles true / "true" / 1 / "1").
+function truthy(v) { return v === true || v === 'true' || v === 1 || v === '1'; }
+
+// Compute ONE normalized beginner-friendly boolean from the TangoTiempo JSON.
+// The API may carry base flags (beginnerFriendly / forBeginners) and override
+// flags (beginnerFriendlyOverride / forBeginnersOverride). Overrides WIN when
+// present; otherwise fall back to the base flags. True if ANY applicable flag is
+// true. Missing everything => false (callers may default seeded events to true).
+function normalizeBeginnerFriendly(j) {
+  const hasOverride =
+    j.beginnerFriendlyOverride != null || j.forBeginnersOverride != null;
+  if (hasOverride) {
+    return truthy(j.beginnerFriendlyOverride) || truthy(j.forBeginnersOverride);
+  }
+  return truthy(j.beginnerFriendly) || truthy(j.forBeginners);
+}
+
 // Accept a full https://tangotiempo.com/event/<id> URL OR a bare id; return the
 // first 24-hex run found (lower-cased), or null if there isn't one.
 function extractTtId(idOrUrl) {
@@ -44,6 +61,9 @@ async function fetchTangoTiempoEvent(idOrUrl) {
       // eventImage is preferred; fall back through featured/fallback, else null.
       // (fallbackImageUrl can be a site-relative path — callers hide broken imgs.)
       image: j.eventImage || j.featuredImage || j.fallbackImageUrl || null,
+      // Single normalized beginner-friendly flag (overrides win; any "for/friendly"
+      // flag true => true). Drives the /events beginner-only listing.
+      beginnerFriendly: normalizeBeginnerFriendly(j),
     };
   } catch (e) {
     return null;
