@@ -2,6 +2,10 @@
   "meta": {
     "updates": [
       {
+        "version": "0.8.2",
+        "note": "Lessons restyled as a printed directory: alphabetical, bold names, fine-print contact, hairline separators (no buttons)."
+      },
+      {
         "version": "0.8.1",
         "note": "Events in 3 tiers: For beginners → A bit more adventurous (beginner-friendly) → Even more (tangotiempo.com)."
       },

@@ -685,10 +685,15 @@ function volunteerPage(flash) {
 }
 
 /* ---------- page: Lessons tab / studios directory (GET /lessons) ------------ */
-/* The LESSONS tab: real Boston studios that teach beginner lessons. A SEPARATE
- * collection from organizers (which live on /events). Each card: studio name +
- * a Call button (tel:, only if a phone exists) + a Website button (new tab,
- * only if a web exists). PUBLIC page — kept money-free. */
+/* v0.8.2 — the LESSONS tab, restyled as a PRINTED DIRECTORY CARD (a "Beginner
+ * Lessons" bookmark), NOT an app screen. Real Boston studios that teach beginner
+ * lessons, a SEPARATE collection from organizers (which live on /events). Each
+ * studio is a printed LINE: the name in bold warm terracotta (the prominent
+ * element), then the contact in small "fine print" below (phone · website).
+ * A hairline rule separates each entry, like a printed directory. NO BUTTONS —
+ * phone stays a subtle tel: link and the website a subtle plain link so mobile
+ * tap-to-call still works, but visually it reads as fine print, not controls.
+ * Studios are listed ALPHABETICALLY (case-insensitive). PUBLIC — money-free. */
 
 // Normalize a bare domain (e.g. "bluetango.org") to an https:// URL, leaving
 // already-qualified links untouched.
@@ -698,31 +703,59 @@ function studioHref(web) {
   return /^https?:\/\//i.test(w) ? w : 'https://' + w;
 }
 
+// Strip the scheme (and any trailing slash) so the printed fine print reads as a
+// bare domain like "bluetango.org" rather than "https://bluetango.org/".
+function studioWebLabel(web) {
+  return String(web || '').trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
+}
+
 async function lessonsPage() {
-  const studios = await store.listStudios();
-  const cards = studios.length ? studios.map((s) => {
+  const studios = (await store.listStudios()).slice().sort((a, b) =>
+    String(a.name || '').toLowerCase().localeCompare(String(b.name || '').toLowerCase()));
+
+  const rows = studios.length ? studios.map((s) => {
     const href = studioHref(s.web);
-    const ctas = (s.phone || href)
-      ? `<div class="ctas">
-          ${s.phone ? `<a href="tel:${esc(s.phone.replace(/[^0-9+]/g, ''))}">Call</a>` : ''}
-          ${href ? `<a class="alt" href="${esc(href)}" target="_blank" rel="noopener">Website</a>` : ''}
-        </div>`
-      : `<p class="hint" style="margin-top:4px">Ask your buddy — they can help you connect.</p>`;
-    const phoneLine = s.phone
-      ? `<div class="studio">${esc(s.phone)}</div>` : '';
-    return `<div class="card teacher">
-      <h3>${esc(s.name)}</h3>
-      ${phoneLine}
-      ${ctas}
+    // Fine print: phone (tel:) · website (plain link). Omit whichever is absent —
+    // no empty dashes cluttering the line.
+    const parts = [];
+    if (s.phone) {
+      parts.push(`<a class="dir-tel" href="tel:${esc(s.phone.replace(/[^0-9+]/g, ''))}">${esc(s.phone)}</a>`);
+    }
+    if (href) {
+      parts.push(`<a class="dir-web" href="${esc(href)}" target="_blank" rel="noopener">${esc(studioWebLabel(s.web))}</a>`);
+    }
+    const fine = parts.length
+      ? `<div class="dir-fine">${parts.join('<span class="dir-sep"> · </span>')}</div>`
+      : '';
+    return `<div class="dir-entry">
+      <div class="dir-name">${esc(s.name)}</div>
+      ${fine}
     </div>`;
-  }).join('') : `<div class="card"><p class="empty">No studios listed yet — check back soon.</p></div>`;
+  }).join('') : `<p class="empty">No studios listed yet — check back soon.</p>`;
+
   return page('Boston Tango Lessons', `
     <span class="badge">Boston Tango · Lessons</span>
-    <h1>Ready to <span class="accent">learn?</span></h1>
-    <p class="lede">Here are Boston studios teaching beginner lessons. Tap <b>Call</b> or open a
-      studio's <b>Website</b> — your buddy can come along and help you take the first step.</p>
-    ${cards}
+    <h1>Beginner lessons <span class="accent">in Boston</span></h1>
+    <p class="lede">A little card of the studios that welcome first-timers. Keep it in your
+      pocket — your buddy can come along and help you take the first step.</p>
+    <div class="dir-card">
+      ${rows}
+    </div>
     <p class="foot">Tango Buddy · Boston · the studios that welcome first-timers.</p>
+    <style>
+      /* Printed lessons card / bookmark — editorial, not app chrome. */
+      .dir-card{background:#fffaf3;border:1px solid var(--line);border-radius:16px;
+        padding:6px 20px;box-shadow:0 10px 30px rgba(158,63,39,.08)}
+      .dir-entry{padding:18px 0;border-bottom:1px solid var(--line)}
+      .dir-entry:last-child{border-bottom:none}
+      .dir-name{font-weight:800;font-size:19px;line-height:1.25;color:var(--terra);
+        letter-spacing:.01em}
+      .dir-fine{margin-top:5px;font-size:13px;line-height:1.5;color:#a98a76}
+      .dir-fine a{color:#a98a76;text-decoration:none}
+      .dir-fine a:active{color:var(--terra-d)}
+      .dir-fine .dir-tel{white-space:nowrap}
+      .dir-sep{color:var(--line)}
+    </style>
   `);
 }
 
