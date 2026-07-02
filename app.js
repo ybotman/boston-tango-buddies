@@ -864,16 +864,16 @@ async function eventsPage(flash) {
     ? `<p class="promise"><b>Got it — see you on the dance floor!</b> Your check-in is saved.
         Your buddy and the community can see where you are dancing.</p>` : '';
 
-  // Build the tier body. On fallback: a single "Beginner nights" section with the
+  // Build the tier body. On fallback: a single "Beginner-friendly events" section with the
   // saved-picks note (0.8.0 behavior). Live: hide any empty tier's heading.
   let tiersHtml;
   if (usingFallback) {
     const cards = fallbackItems.length
       ? fallbackItems.map(eventCardHtml).join('')
-      : `<div class="card"><p class="empty">No beginner nights in the next 2 weeks — check back soon.</p></div>`;
+      : `<div class="card"><p class="empty">No beginner-friendly events in the next 2 weeks — check back soon.</p></div>`;
     tiersHtml = `
       <p class="hint" style="margin:0 0 14px">showing saved picks</p>
-      <h2 class="tier-h">Beginner nights</h2>
+      <h2 class="tier-h">Beginner-friendly events</h2>
       ${cards}`;
   } else {
     const tier1Html = tier1.length ? `
@@ -901,7 +901,7 @@ async function eventsPage(flash) {
 
   return page('Boston Tango Events', `
     <span class="badge">Boston Tango · Events</span>
-    <h1>Beginner nights — <span class="accent">next 2 weeks</span></h1>
+    <h1>Beginner-friendly events — <span class="accent">next 2 weeks</span></h1>
     <p class="lede">Events made for newcomers, near Boston. Come as you are.</p>
     ${heroBlock()}
     ${thanks}
