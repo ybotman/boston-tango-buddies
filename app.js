@@ -67,6 +67,48 @@ function esc(s) {
     .replace(/'/g, '&#39;');
 }
 
+/* ---------- V1.1.0 (D7): server-side validation ------------------------------
+ * There was none, despite a comment claiming otherwise, and a blank POST created
+ * a real row. These helpers are deliberately tiny and shared, so every write path
+ * rejects the same way and no endpoint gets forgotten.
+ *
+ * NOTE: validation applies to NEW writes only. It must never be applied
+ * retroactively to the seven backfilled historical records, which legitimately
+ * lack fields nobody ever asked them for. */
+
+// A checkbox is "on" from a plain form post, true/'true' from JSON clients.
+function isChecked(v) {
+  return v === true || v === 'true' || v === 'on' || v === 'yes' || v === '1';
+}
+
+// Returns a list of human-readable missing things, e.g. ["your name"].
+function requireFields(body, specs) {
+  const missing = [];
+  specs.forEach(([key, label]) => {
+    if (!String(body[key] == null ? '' : body[key]).trim()) missing.push(label);
+  });
+  return missing;
+}
+
+// Render a validation flash back on the form page. Escaped: the string arrives
+// off the query string, so it is attacker-controllable even though we authored
+// the only messages that legitimately land here.
+function flashNotice(flash) {
+  const msg = String(flash == null ? '' : flash).trim();
+  if (!msg || msg === 'thanks') return '';
+  return `<p class="promise" role="alert"><b>${esc(msg)}</b></p>`;
+}
+
+// Reject a bad POST without writing anything. JSON clients get a 400 they can
+// show inline; plain form posts bounce back to the page with a readable flash.
+function rejectPost(req, res, backTo, problems) {
+  const msg = `Please add ${problems.join(', ')}.`;
+  if ((req.headers.accept || '').includes('application/json')) {
+    return sendJson(res, 400, { error: msg, missing: problems });
+  }
+  return redirect(res, `${backTo}?flash=${encodeURIComponent(msg)}`);
+}
+
 function send(res, status, body, type) {
   res.writeHead(status, { 'Content-Type': type || 'text/html; charset=utf-8' });
   res.end(body);
@@ -462,7 +504,11 @@ function signupPage(flash) {
          <p class="lede" style="margin-bottom:0">We'll pair you with a buddy and set up your
          <b>free first lesson</b>. Keep this on your phone — next time you visit, you'll see
          what's happening.</p>
-       </div>` : '';
+       </div>`
+    // D7: any other flash is a validation message from a rejected no-JS post.
+    // It MUST be shown — a silent bounce back to an identical page reads as the
+    // form being broken, and the person just leaves.
+    : flashNotice(flash);
   return page('Boston Tango Buddies', `
     <div id="tb-capture">
       <span class="badge">Boston Tango</span>
@@ -905,7 +951,8 @@ function volunteerPage(flash) {
          <h1>Thank you, buddy!</h1>
          <p class="lede" style="margin-bottom:0">You're on the list. We'll pair you with a newcomer
          soon and make the intro. Gracias for helping someone find tango.</p>
-       </div>` : '';
+       </div>`
+    : flashNotice(flash);   // D7 validation message, see signupPage
   return page('Be a Tango Buddy — Boston', `
     <span class="badge">Boston Tango · Be a Buddy</span>
     <h1>You already know more <span class="accent">than you think.</span></h1>
@@ -2030,7 +2077,21 @@ async function requestListener(req, res) {
       }
 
       if (pathname === '/api/newbie') {
-        // consent is required by the form; guard server-side too.
+        // V1.1.0 (D7): REAL server-side validation. The comment that used to sit
+        // here claimed consent was guarded server-side; it was not, and a blank
+        // POST created a real empty row with a real token — the person then saw
+        // a thank-you screen for a record that was useless. Never write a partial
+        // record. (D1a will add firstName/lastName/contact2/wantsBuddy here once
+        // store.addNewbie persists them — deliberately NOT validated yet, because
+        // requiring fields the store would silently drop is worse than not asking.)
+        const problems = requireFields(body, [
+          ['name', 'your name'],
+          ['contact', 'a way to reach you'],
+          ['platform', 'how to reach you'],
+        ]);
+        if (!isChecked(body.consent)) problems.push('your consent to be contacted');
+        if (problems.length) return rejectPost(req, res, '/signup', problems);
+
         // V1.2: mint the device token and return it so the client can save it to
         // localStorage (tb_token). AJAX callers ask for JSON; a plain no-JS POST
         // still redirects to the server-rendered thank-you.
@@ -2041,6 +2102,27 @@ async function requestListener(req, res) {
         return redirect(res, '/signup?flash=thanks');
       }
       if (pathname === '/api/volunteer') {
+        // 🔴 D5: gate the ENDPOINT, not just the page. /volunteer sits behind
+        // BUDDY_PASS so Toby controls who joins the buddy pool, but this POST had
+        // no gate at all — anyone could insert themselves as a buddy by posting
+        // directly, walk straight past the door, and land in the assign-buddy
+        // dropdown ready to be matched with a newcomer. Buddies are people Toby
+        // recruits and vets; an unvetted stranger being handed a nervous
+        // newcomer is the worst failure this product has.
+        //
+        // Same shape as the /social leak and GET /api/thread: gating the page
+        // while leaving its endpoint open is not gating anything.
+        if (!buddyOK(req, url)) {
+          return send(res, 403, 'Forbidden — buddy passphrase required.', 'text/plain');
+        }
+        // D7: a buddy record with no contact is unusable, and an empty one
+        // silently occupies a slot in the assign-buddy dropdown.
+        const problems = requireFields(body, [
+          ['name', 'your name'],
+          ['contact', 'a way to reach you'],
+          ['area', 'your Boston area'],
+        ]);
+        if (problems.length) return rejectPost(req, res, '/volunteer', problems);
         await store.addVolunteer(body);
         return redirect(res, '/volunteer?flash=thanks');
       }
