@@ -1948,9 +1948,22 @@ async function requestListener(req, res) {
         || pathname === '/todo') {
         return redirect(res, '/');
       }
+      // 🔴 V1.1.0 (D6): DISABLED — the READ half of the messaging removal.
+      //
+      // This was unauthenticated and returned every message in any thread to
+      // anyone who named it. No enumeration was even needed: the social thread's
+      // id is the hardcoded constant 'thread_social' (store.js SOCIAL_ID), so
+      // GET /api/thread?id=thread_social returned the whole room. Buddy threads
+      // use random ids, but a random id is not an access control.
+      //
+      // Caught by auditing read paths after the /social incident. It held only
+      // test chatter today, which is exactly why it was easy to miss: same
+      // dormant shape as socialPage() — safe on fake data, a leak the instant
+      // real conversations exist. Messaging is gone (D6a, chat is now an
+      // external group), so nothing consumes this. store functions and the
+      // threads/messages data are untouched, per D6.
       if (pathname === '/api/thread') {
-        const id = url.searchParams.get('id');
-        return sendJson(res, 200, { id, messages: id ? await store.listMessages(id) : [] });
+        return sendJson(res, 410, { error: 'in-app messaging has been removed' });
       }
       // v0.8.1: LIVE feed of the beginnerFriendly SUPERSET (next 2 weeks) from the
       // MasterCalendar API, RRULE-expanded + cached (~15 min); each occurrence
