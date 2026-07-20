@@ -35,6 +35,26 @@ const ASSETS_DIR = path.join(__dirname, 'assets');
 const ADMIN_PASS = process.env.ADMIN_PASS || '';
 const ADMIN_COOKIE = 'tb_admin';
 
+// V1.1.0 (D5): a SECOND, LOWER access tier. BUDDY_PASS unlocks /volunteer only.
+// ADMIN_PASS is a superset — it opens /volunteer too, so Toby carries one phrase.
+// The cookies are deliberately DISTINCT: a buddy must never be able to reach
+// /admin, because /admin lists every newcomer's name and phone number and Toby
+// hands the buddy phrase out freely to prospective volunteers.
+const BUDDY_PASS = process.env.BUDDY_PASS || '';
+const BUDDY_COOKIE = 'tb_buddy';
+
+// 🔴 The cookie split alone does NOT prevent escalation. adminOK() also accepts
+// the phrase straight off ?pass=, so if BUDDY_PASS and ADMIN_PASS hold the SAME
+// string, any volunteer handed the buddy phrase can open /admin?pass=<phrase>
+// and get the full operator console. Fail loudly rather than serve that.
+if (BUDDY_PASS && ADMIN_PASS && BUDDY_PASS === ADMIN_PASS) {
+  throw new Error(
+    'BUDDY_PASS must not equal ADMIN_PASS: identical values let any buddy reach '
+    + '/admin via ?pass= and read every newcomer\'s contact details. '
+    + 'Set BUDDY_PASS to a different phrase.'
+  );
+}
+
 /* ---------- tiny helpers ---------------------------------------------------- */
 
 // Escape user-supplied text before dropping it into HTML (demo-grade XSS guard).
@@ -97,6 +117,24 @@ function adminOK(req, url) {
   if (c[ADMIN_COOKIE] && c[ADMIN_COOKIE] === ADMIN_PASS) return true;
   const q = url && url.searchParams ? url.searchParams.get('pass') : null;
   return !!(q && q === ADMIN_PASS);
+}
+// NOTE: adminOK deliberately never consults BUDDY_COOKIE or BUDDY_PASS. That
+// one-way relationship IS the access split — do not "tidy" it into a shared
+// helper.
+
+// V1.1.0 (D5): buddy-tier auth for /volunteer. Mirrors adminOK's convention.
+// Fallback chain: BUDDY_PASS if set -> else ADMIN_PASS -> else open (local dev).
+// Admin is a superset, so a valid ADMIN cookie/param also opens /volunteer.
+function buddyOK(req, url) {
+  // Admin is a superset: a valid admin cookie/param always opens /volunteer.
+  if (ADMIN_PASS && adminOK(req, url)) return true;
+  // No buddy phrase configured: admin-only if ADMIN_PASS is set (already checked
+  // above, so this is a rejection), wide open if neither is set (local dev).
+  if (!BUDDY_PASS) return !ADMIN_PASS;
+  const c = parseCookies(req);
+  if (c[BUDDY_COOKIE] && c[BUDDY_COOKIE] === BUDDY_PASS) return true;
+  const q = url && url.searchParams ? url.searchParams.get('pass') : null;
+  return !!(q && q === BUDDY_PASS);
 }
 
 /* ---------- shared chrome (warm palette: terracotta/coral + cream + amber) --- */
@@ -693,7 +731,40 @@ function homeShellScript() {
 </script>`;
 }
 
+/* ---------- gate: buddy passphrase (GET /volunteer) ------------------------- */
+/* V1.1.0 (D5). Mirrors adminGatePage, but posts back to /volunteer and sets the
+ * SEPARATE tb_buddy cookie. Wording is deliberately warm rather than official:
+ * the person on the other side of this screen was invited by Toby and is doing
+ * him a favour, so it should not read like a login wall. */
+
+function buddyGatePage(wrong) {
+  const msg = wrong
+    ? '<p class="promise"><b>That passphrase did not match.</b> Try again, or ask Toby for it.</p>' : '';
+  return page('Be a Tango Buddy — Boston', `
+    <span class="badge">Boston Tango · Be a Buddy</span>
+    <h1>Come on <span class="accent">in.</span></h1>
+    <p class="lede">This page is invitation-only. Pop in the passphrase you were given
+      and we will tell you what being a buddy actually involves.</p>
+    ${msg}
+    <div class="card">
+      <form method="GET" action="/volunteer">
+        <label class="fld" for="pass">Passphrase</label>
+        <input id="pass" name="pass" type="password" autocomplete="current-password"
+          placeholder="The phrase you were sent" required />
+        <button class="submit" type="submit">Continue</button>
+      </form>
+    </div>
+    <p class="foot">Tango Buddy · Boston · buddies are invited, not recruited.</p>
+  `);
+}
+
 /* ---------- page: volunteer capture (GET /volunteer) ------------------------ */
+/* V1.1.0 (D5a) — THE COPY IS THE FEATURE. People decline for three reasons:
+ * they think they must dance with the newcomer, teach them, or commit
+ * open-endedly. All three are killed above the fold, before the form. Tone is
+ * warm, plain and unheroic: this is not a give-back appeal, it is a reassurance
+ * that the job is smaller than they fear. Do not "tighten" this into bullet
+ * points — the paragraphs are doing the reassuring. */
 
 function volunteerPage(flash) {
   const thanks = flash === 'thanks'
@@ -704,11 +775,45 @@ function volunteerPage(flash) {
          soon and make the intro. Gracias for helping someone find tango.</p>
        </div>` : '';
   return page('Be a Tango Buddy — Boston', `
-    <span class="badge">Boston Tango · Volunteers</span>
-    <h1>Help someone <span class="accent">fall for tango.</span></h1>
-    <p class="lede">Buddies are the whole magic. Spend a little time beside a newcomer, bring them to
-      a milonga, and keep them from drifting off. We'll handle the matching.</p>
+    <span class="badge">Boston Tango · Be a Buddy</span>
+    <h1>You already know more <span class="accent">than you think.</span></h1>
+    <p class="lede">Someone walked into their first milonga last week and understood none of it.
+      You did too, once. Being a buddy just means they have someone to ask.</p>
     ${thanks}
+    <p class="promise"><b>The short version:</b> you are not teaching, you are not dancing
+      with them, and you can stop whenever you like.</p>
+    <div class="card">
+      <h3 style="margin:0 0 10px">What it actually is</h3>
+      <p style="margin:0 0 14px">A familiar face for someone's first few months in Boston tango.
+        The person they can ask the questions they are embarrassed to ask: is this milonga
+        alright for a beginner, why did that person nod at me, what do I wear, when is it
+        rude to leave.</p>
+
+      <h3 style="margin:0 0 10px">You are not their teacher</h3>
+      <p style="margin:0 0 14px">You never correct anyone's technique and you never give a
+        lesson. Teachers teach. You point them at teachers.</p>
+
+      <h3 style="margin:0 0 10px">You are not their dance partner</h3>
+      <p style="margin:0 0 14px">You never have to dance with them. Not once.</p>
+
+      <h3 style="margin:0 0 10px">You never have to go anywhere with them</h3>
+      <p style="margin:0 0 14px">There is no obligation to turn up to anything together, or to
+        be at any particular milonga on any particular night.</p>
+
+      <h3 style="margin:0 0 10px">What you are is a guide to the system</h3>
+      <p style="margin:0 0 14px">Which milonga is kind to a newcomer on a Tuesday. What the
+        codes mean. Who to say hello to. What happens when you walk through the door.
+        The unwritten things nobody puts on a website.</p>
+
+      <h3 style="margin:0 0 10px">What it costs</h3>
+      <p style="margin:0 0 14px">A handful of messages a month. That is the honest number,
+        not a recruiting number.</p>
+
+      <h3 style="margin:0 0 10px">You can stop any time</h3>
+      <p style="margin:0">No notice, no explanation, no guilt.</p>
+    </div>
+    <h2 class="tier-h" style="font-size:20px;font-weight:800;margin:22px 0 12px">
+      Still interested? Tell us a little about you.</h2>
     <div class="card">
       <form method="POST" action="/api/volunteer">
         <label class="fld" for="name">Your name</label>
@@ -1641,7 +1746,24 @@ async function requestListener(req, res) {
       }
       if (pathname === '/signup') return send(res, 200, signupPage(url.searchParams.get('flash')));
       if (pathname === '/welcome') return send(res, 200, welcomePage());
-      if (pathname === '/volunteer') return send(res, 200, volunteerPage(url.searchParams.get('flash')));
+      // V1.1.0 (D5): /volunteer is now behind the BUDDY tier. Toby hands the link
+      // and phrase to people he has vetted; buddies are invited, not self-serve.
+      if (pathname === '/volunteer') {
+        if (!buddyOK(req, url)) {
+          const tried = url.searchParams.get('pass');
+          return send(res, 200, buddyGatePage(!!tried));
+        }
+        // Phrase supplied via ?pass= -> drop the BUDDY cookie (never the admin
+        // one) and land back on a clean /volunteer.
+        if (BUDDY_PASS && url.searchParams.get('pass') === BUDDY_PASS) {
+          res.writeHead(302, {
+            'Set-Cookie': `${BUDDY_COOKIE}=${encodeURIComponent(BUDDY_PASS)}; Path=/; HttpOnly; SameSite=Lax`,
+            Location: '/volunteer',
+          });
+          return res.end();
+        }
+        return send(res, 200, volunteerPage(url.searchParams.get('flash')));
+      }
       if (pathname === '/lessons') return send(res, 200, await lessonsPage());
       // Organizers are no longer a public browse page — they live on events (and
       // stay manageable in /admin). The old /teachers route now points at Lessons.
@@ -1826,16 +1948,21 @@ async function requestListener(req, res) {
         await store.setHandover(body.newbieId, body.organizerId);
         return redirect(res, '/admin');
       }
+      // 🔴 V1.1.0 (D6): DISABLED. In-app messaging is gone — chat is now an
+      // external group link. These endpoints were live, unauthenticated, and
+      // carried three separate holes:
+      //   1. OPEN REDIRECT — `body.redirect` was echoed straight into a 302, so
+      //      a link reading as bostongtangobuddies.com could land a newcomer on
+      //      any site an attacker chose. Aimed at people who had just been asked
+      //      to trust this domain with their name and phone number.
+      //   2. IMPERSONATION — `fromName` was arbitrary free text, so anyone could
+      //      post as anyone.
+      //   3. No auth at all — no token, no gate.
+      // Removing the PAGES was not enough: an unreachable page with a live write
+      // endpoint is not removed. The implementations above are retained intact;
+      // this rejection is the one-line revert point.
       if (pathname === '/api/chat' || pathname === '/api/social') {
-        // No auth — identity is just the free-text fromName (demo).
-        if (body.threadId && (body.body || '').trim()) {
-          await store.postMessage(body.threadId, body.fromName, body.body);
-        }
-        // fetch() callers ignore the body; <noscript>/plain posts get a redirect.
-        if ((req.headers.accept || '').includes('application/json')) {
-          return sendJson(res, 200, { ok: true });
-        }
-        return redirect(res, body.redirect || (pathname === '/api/social' ? '/social' : '/chat'));
+        return sendJson(res, 410, { error: 'in-app messaging has been removed' });
       }
       return send(res, 404, 'Not found', 'text/plain');
     }
