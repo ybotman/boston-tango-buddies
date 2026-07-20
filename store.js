@@ -2,16 +2,29 @@
  * store.js — THE ONLY DATA-ACCESS MODULE (the thin, swappable data layer)
  * =============================================================================
  *
- * Tango Buddy POC — env-gated DUAL BACKEND (chosen once, at runtime):
+ * Tango Buddy POC — env-gated TRIPLE BACKEND (chosen once, at runtime).
+ * Precedence: D1 -> Firestore -> local JSON.
  *
- *   1) FIRESTORE  — used when the Firebase service-account envs are present
+ *   1) CLOUDFLARE D1 — used when CF_ACCOUNT_ID + CF_D1_DATABASE_ID +
+ *      CF_D1_API_TOKEN are present. THE PRODUCTION STORE. Reached over the
+ *      Cloudflare REST API (not a native binding) because the app is hosted on
+ *      Vercel; a later move to CF Pages turns the same DB into a binding with
+ *      no migration. Stored as one generic docs(collection,id,json) table plus
+ *      a SQL view per collection — see d1/schema.sql.
+ *
+ *   2) FIRESTORE  — used when the Firebase service-account envs are present
  *      (FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY).
  *      `firebase-admin` is required LAZILY, only on that path, so local dev
- *      never needs it installed. Collections:
+ *      never needs it installed. RETAINED BUT UNUSED — superseded by D1
+ *      (Toby, 2026-07-20); kept in place rather than deleted.
+ *      Collections:
  *        newbies, volunteers, organizers, studios, events, checkins, threads, messages, meta
  *
- *   2) LOCAL JSON — the default (no Firebase envs): reads/writes poc/data/db.json
+ *   3) LOCAL JSON — the default (no cloud envs): reads/writes poc/data/db.json
  *      with Node's built-in `fs`. Zero dependencies, unchanged local behavior.
+ *      NOTE: on Vercel with no cloud envs this writes to /tmp and is LOST on
+ *      cold start. That is the failure mode D1 exists to end — it is why the
+ *      D1 backend fails LOUD instead of falling back to here.
  *
  * >>> THIS FILE IS THE ONLY THING THAT KNOWS WHICH BACKEND IS IN USE. <<<
  * Everything above store.js (app.js, the pages, the token/tb_token flow) is
@@ -65,6 +78,14 @@ const USE_FIRESTORE = !!(
   process.env.FIREBASE_PROJECT_ID &&
   process.env.FIREBASE_CLIENT_EMAIL &&
   process.env.FIREBASE_PRIVATE_KEY
+);
+
+// D1 ONLY when the full credential set is present. Takes precedence over both
+// of the above (see `backend` selection below).
+const USE_D1 = !!(
+  process.env.CF_ACCOUNT_ID &&
+  process.env.CF_D1_DATABASE_ID &&
+  process.env.CF_D1_API_TOKEN
 );
 
 function id(prefix) {
@@ -198,7 +219,112 @@ const firestoreBackend = {
   },
 };
 
-const backend = USE_FIRESTORE ? firestoreBackend : jsonBackend;
+// ---- CLOUDFLARE D1 backend (REST; only when envs present) ------------------
+// Reached over the Cloudflare REST API rather than a native binding, because the
+// app is hosted on Vercel. If BTB later moves to CF Pages, the SAME database
+// becomes a native binding — no data migration, no schema rework.
+//
+// Storage shape: one generic `docs(collection, id, json, updatedAt)` table, with
+// a SQL view per collection (see d1/schema.sql) so the data stays readable by
+// hand. The generic shape is what lets all ~25 public functions below work
+// against D1 without a single change.
+//
+// Uses built-in fetch (Node 18+ on Vercel) — no new npm dependency.
+
+const D1_ENDPOINT = () =>
+  `https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACCOUNT_ID}` +
+  `/d1/database/${process.env.CF_D1_DATABASE_ID}/query`;
+
+// Every statement goes through here. ALWAYS parameterised (`?`) — user input is
+// never concatenated into SQL.
+//
+// FAIL LOUD: if the D1 envs are set but a call fails, we log and throw. We do
+// NOT fall back to the JSON/tmp backend. Silent fallback to an ephemeral /tmp
+// file is precisely the bug this phase exists to fix — a signup that "succeeds"
+// into a disappearing file is worse than a signup that visibly errors.
+async function d1Query(sql, params) {
+  let res;
+  try {
+    res = await fetch(D1_ENDPOINT(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.CF_D1_API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sql, params: params || [] }),
+    });
+  } catch (e) {
+    console.error('[store/D1] network failure:', e && e.message, '| sql:', sql);
+    throw new Error(`D1 request failed: ${e && e.message}`);
+  }
+
+  const bodyText = await res.text();
+  let body;
+  try { body = JSON.parse(bodyText); }
+  catch (e) {
+    console.error('[store/D1] non-JSON response', res.status, bodyText.slice(0, 400));
+    throw new Error(`D1 returned non-JSON (HTTP ${res.status})`);
+  }
+
+  if (!res.ok || body.success === false) {
+    // CF returns a structured errors[] — surface it verbatim, it is the only
+    // way to tell "bad token" from "no such table" from "SQL syntax".
+    const errs = (body.errors || []).map((e) => `${e.code}: ${e.message}`).join('; ')
+      || `HTTP ${res.status}`;
+    console.error('[store/D1] query failed:', errs, '| sql:', sql);
+    throw new Error(`D1 query failed: ${errs}`);
+  }
+
+  // Shape: { result: [ { results: [...], success, meta } ], success: true }
+  const first = Array.isArray(body.result) ? body.result[0] : null;
+  return (first && first.results) || [];
+}
+
+// Rows come back as { json: '<serialized doc>' }. One place to parse them, so a
+// corrupt row is reported with its collection rather than blowing up opaquely.
+function d1Parse(rows, coll) {
+  const out = [];
+  for (const r of rows) {
+    try { out.push(JSON.parse(r.json)); }
+    catch (e) {
+      console.error(`[store/D1] unparseable json in ${coll}, skipping row:`, r.id);
+    }
+  }
+  return out;
+}
+
+const d1Backend = {
+  async all(coll) {
+    return d1Parse(
+      await d1Query('SELECT id, json FROM docs WHERE collection = ?', [coll]),
+      coll,
+    );
+  },
+  async get(coll, docId) {
+    const rows = await d1Query(
+      'SELECT id, json FROM docs WHERE collection = ? AND id = ?', [coll, docId],
+    );
+    return d1Parse(rows, coll)[0] || null;
+  },
+  async set(coll, docId, doc) {
+    await d1Query(
+      'INSERT INTO docs (collection, id, json, updatedAt) VALUES (?, ?, ?, ?) ' +
+      'ON CONFLICT(collection, id) DO UPDATE SET json = excluded.json, ' +
+      'updatedAt = excluded.updatedAt',
+      [coll, docId, JSON.stringify(doc), new Date().toISOString()],
+    );
+    return doc;
+  },
+  async meta() {
+    // Mirrors the Firestore backend: a single `content` doc in `meta`.
+    const m = (await d1Backend.get('meta', 'content')) || {};
+    return { updates: m.updates || [], ideas: m.ideas || [], todos: m.todos || [] };
+  },
+};
+
+// Precedence: D1 -> Firestore -> local JSON. Local dev with no envs set is
+// unchanged (jsonBackend against data/db.json).
+const backend = USE_D1 ? d1Backend : (USE_FIRESTORE ? firestoreBackend : jsonBackend);
 
 /* ---------- public API (all async) ----------------------------------------- */
 
@@ -498,4 +624,5 @@ module.exports = {
   listTodos,
   // exposed for diagnostics/tests only (does not leak backend to callers)
   USE_FIRESTORE,
+  USE_D1,
 };
