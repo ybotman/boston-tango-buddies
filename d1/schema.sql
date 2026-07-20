@@ -46,7 +46,19 @@ SELECT id,
        json_extract(json,'$.createdAt')           AS createdAt,
        json_extract(json,'$.origination')         AS origination,
        json_extract(json,'$.readyForLessons')     AS readyForLessons,
-       json_extract(json,'$.handedToOrganizerId') AS handedToOrganizerId
+       json_extract(json,'$.handedToOrganizerId') AS handedToOrganizerId,
+       -- V1.1.0 signup fields. NULL means NOT ASKED, which is NOT the same as
+       -- "no": the 7 backfilled historical newcomers were never asked these
+       -- questions. Filter with `wantsBuddy = 1` / `= 0` / `IS NULL` accordingly
+       -- — do not treat NULL as false.
+       json_extract(json,'$.firstName')           AS firstName,
+       json_extract(json,'$.lastName')            AS lastName,
+       json_extract(json,'$.contact2')            AS contact2,
+       json_extract(json,'$.platform2')           AS platform2,
+       json_extract(json,'$.wantsBuddy')          AS wantsBuddy,
+       json_extract(json,'$.dancedBefore')        AS dancedBefore,
+       json_extract(json,'$.dancedWhat')          AS dancedWhat,
+       json_extract(json,'$.dancedTangoBefore')   AS dancedTangoBefore
 FROM docs WHERE collection='newbies';
 
 DROP VIEW IF EXISTS volunteers;

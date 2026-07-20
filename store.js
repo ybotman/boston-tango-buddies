@@ -335,13 +335,53 @@ const backend = USE_D1 ? d1Backend : (USE_FIRESTORE ? firestoreBackend : jsonBac
 
 /* ---------- public API (all async) ----------------------------------------- */
 
+/* --- field helpers for the extended signup ---------------------------------
+ * These exist to protect ONE distinction: "absent" and "no" are different facts.
+ *
+ * The 7 backfilled historical newcomers were never asked whether they want a
+ * buddy, or whether they have danced before. Writing `false` onto those records
+ * would state, as fact, that they answered "no" — and Toby might act on that
+ * (e.g. never offering a buddy to someone who was simply never asked). So a
+ * field that was not supplied is OMITTED, never defaulted.
+ * ------------------------------------------------------------------------- */
+
+// Tri-state: true | false | undefined. Returns undefined when the caller did
+// not supply the field at all, so the key can be left off the record entirely.
+function tri(v) {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (v === true) return true;
+  if (v === false) return false;
+  const s = String(v).trim().toLowerCase();
+  if (s === '') return undefined;
+  if (['true', 'yes', 'on', '1', 'y'].includes(s)) return true;
+  if (['false', 'no', 'off', '0', 'n'].includes(s)) return false;
+  return undefined; // unrecognised -> treat as not answered rather than as "no"
+}
+
+// Assign only when there is something to assign, so absent stays absent.
+function put(obj, key, value) {
+  if (value !== undefined) obj[key] = value;
+}
+function putStr(obj, key, value) {
+  const s = (value === undefined || value === null) ? '' : String(value).trim();
+  if (s !== '') obj[key] = s;
+}
+
 async function addNewbie(data) {
+  // The combined `name` stays authoritative and is ALWAYS written: admin, the
+  // "Hello, {name}" banner and the D1 newbies view all read it, and the 7
+  // backfilled historical rows have only a single combined name. When the form
+  // supplies first/last we compose it; otherwise we keep whatever `name` came in.
+  const first = (data.firstName || '').trim();
+  const last = (data.lastName || '').trim();
+  const combined = [first, last].filter(Boolean).join(' ');
+
   const newbie = {
     id: id('n'),
     // A random device token = the newbie's light identity (no login). The client
     // stores it in localStorage (tb_token) for the with-token home on return.
     token: id('tok'),
-    name: (data.name || '').trim(),
+    name: combined || (data.name || '').trim(),
     contact: (data.contact || '').trim(),
     platform: (data.platform || '').trim(),
     note: (data.note || '').trim(),
@@ -353,6 +393,17 @@ async function addNewbie(data) {
     handedToOrganizerId: null,
     createdAt: new Date().toISOString(),
   };
+
+  // --- V1.1.0 signup fields. All optional; omitted when not supplied. ---
+  putStr(newbie, 'firstName', first);
+  putStr(newbie, 'lastName', last);
+  putStr(newbie, 'contact2', data.contact2);      // optional 2nd contact method
+  putStr(newbie, 'platform2', data.platform2);
+  putStr(newbie, 'dancedWhat', data.dancedWhat);  // e.g. "salsa, swing"
+  put(newbie, 'wantsBuddy', tri(data.wantsBuddy));            // explicit opt-in
+  put(newbie, 'dancedBefore', tri(data.dancedBefore));
+  put(newbie, 'dancedTangoBefore', tri(data.dancedTangoBefore));
+
   await backend.set('newbies', newbie.id, newbie);
   return newbie;
 }
@@ -368,16 +419,31 @@ async function findNewbieByToken(token) {
   return all.find((n) => n.token === token) || null;
 }
 
+// NOTE: this whitelists too, and had the same silent-drop trap as addNewbie —
+// a field the form collects but this function does not name is discarded while
+// the volunteer still sees the thank-you screen. No volunteer-specific new
+// fields have been specced yet, so this mirrors the newbie shape (first/last +
+// optional second contact) to keep the two forms symmetrical and to stop the
+// trap re-appearing the moment the buddy form grows.
 async function addVolunteer(data) {
+  const first = (data.firstName || '').trim();
+  const last = (data.lastName || '').trim();
+  const combined = [first, last].filter(Boolean).join(' ');
+
   const volunteer = {
     id: id('v'),
-    name: (data.name || '').trim(),
+    name: combined || (data.name || '').trim(),
     contact: (data.contact || '').trim(),
     area: (data.area || '').trim(),
     availability: (data.availability || '').trim(),
     note: (data.note || '').trim(),
     createdAt: new Date().toISOString(),
   };
+  putStr(volunteer, 'firstName', first);
+  putStr(volunteer, 'lastName', last);
+  putStr(volunteer, 'contact2', data.contact2);
+  putStr(volunteer, 'platform2', data.platform2);
+
   await backend.set('volunteers', volunteer.id, volunteer);
   return volunteer;
 }
