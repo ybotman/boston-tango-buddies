@@ -114,7 +114,13 @@ const SITE_ORIGIN = 'https://bostontangobuddies.com';
 // The ONLY routes that may be crawled/listed. Deliberately excludes /volunteer
 // (a personal-details capture form) and every page that renders a newcomer's
 // name, contact or messages: /admin /social /chat /updates /ideas /todo /more.
-const PUBLIC_ROUTES = ['/', '/signup', '/events', '/lessons', '/welcome'];
+//
+// /welcome is NOT here. It is becoming the personal post-signup home (V1.1.0 D3)
+// and will carry a WhatsApp group invite. Invite links are a permanent open door
+// — anyone holding the URL joins, no approval — so an indexed page carrying one
+// gets crawled and the group gets scraped. A page with personal content on it is
+// not a landing page and must never be indexable.
+const PUBLIC_ROUTES = ['/', '/signup', '/events', '/lessons'];
 
 /* Indexability is FAIL-CLOSED (V1.0.0, C5). Every page is noindex,nofollow unless
  * it explicitly passes `index: true` — so a page added later is private by default
@@ -548,7 +554,7 @@ function welcomePage() {
         if it doesn't, just <a href="/signup">sign up again</a>.</p>
     </div>
     <p class="foot">Tango Buddy · Boston · a friendly free invitation, nothing more.</p>
-  `, { index: true, path: '/welcome' });
+  `);
 }
 
 /* ---------- page: smart router (GET /) -------------------------------------- */
