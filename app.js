@@ -21,6 +21,10 @@ const { getLiveEvents } = require('./eventsLive');
 // Version comes straight from package.json (zero-dependency, read once at start).
 const VERSION = require('./package.json').version;
 
+// V1.0.0 (C2): the ≡ More drawer is hidden at launch. Flip to true to restore it —
+// the drawer implementation is retained in full, this is the only switch.
+const DRAWER_ENABLED = false;
+
 const PORT = process.env.PORT || 3000;
 const ASSETS_DIR = path.join(__dirname, 'assets');
 
@@ -103,14 +107,33 @@ function adminOK(req, url) {
 const SITE_DESC = 'Boston Tango Buddies — a warm on-ramp for tango newcomers in Boston. '
   + 'We pair you with a buddy so you never learn alone.';
 
+// V1.0.0 — the public origin. Canonical URLs and the sitemap are ALWAYS emitted on
+// the apex: never www., never *.vercel.app (duplicate-content + it leaks the host).
+const SITE_ORIGIN = 'https://bostontangobuddies.com';
+
+// The ONLY routes that may be crawled/listed. Deliberately excludes /volunteer
+// (a personal-details capture form) and every page that renders a newcomer's
+// name, contact or messages: /admin /social /chat /updates /ideas /todo /more.
+const PUBLIC_ROUTES = ['/', '/signup', '/events', '/lessons', '/welcome'];
+
+/* Indexability is FAIL-CLOSED (V1.0.0, C5). Every page is noindex,nofollow unless
+ * it explicitly passes `index: true` — so a page added later is private by default
+ * and someone has to opt IN to publishing it. This is deliberate: /admin, /social,
+ * /chat and the ideas/updates/todo pages render newcomers' names and contact
+ * details, and those must never reach a search index. When opting a page in, pass
+ * `path` too so it gets a canonical URL on the apex. */
 function page(title, body, opts) {
   opts = opts || {};
+  const robots = opts.index ? 'index,follow' : 'noindex,nofollow';
+  const canonical = opts.index && opts.path
+    ? `\n<link rel="canonical" href="${esc(SITE_ORIGIN + opts.path)}" />` : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<!-- Boston Tango Buddies v${esc(VERSION)} -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="robots" content="noindex,nofollow" />
+<meta name="robots" content="${robots}" />${canonical}
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(SITE_DESC)}" />
 <meta name="theme-color" content="#c85a3c" />
@@ -282,12 +305,12 @@ function page(title, body, opts) {
 </style>
 </head>
 <body><div class="wrap">
+<!-- V1.0.0 (C2): nav trimmed to three. Social was removed from the nav but /social
+     stays LIVE by direct URL (hide, not delete). Chat went further — see C3. -->
 <div class="nav">
   <a href="/signup">Learn tango</a>
   <a href="/events">Events</a>
   <a href="/lessons">Lessons</a>
-  <a href="/social">Social</a>
-  <a href="/chat">Chat</a>
 </div>
 ${body}
 </div>
@@ -305,6 +328,15 @@ ${bottomDrawer()}
 // NOTE: this drawer will later be GATED/AUTHENTICATED (the handle stays public,
 // the panel contents become operator-only).
 function bottomDrawer() {
+  // V1.0.0 (C2): the whole drawer is HIDDEN. Toby's call — the launch chrome is the
+  // three-item top nav and nothing else. Every link below stays reachable by typing
+  // the URL (/volunteer /admin /coming /more /updates /ideas /todo); the accepted
+  // consequence is that /admin is now operator-knowledge-only.
+  // The implementation below is retained INTACT and dead: restoring the drawer is
+  // deleting this one return. The version string it used to show now lives in an
+  // HTML comment in page() and in /api/health, so v1.0.0 is still retrievable.
+  if (!DRAWER_ENABLED) return '';
+
   const links = `
     <div class="acts">
       <a class="buddy" href="/volunteer">Be a buddy</a>
@@ -432,7 +464,7 @@ function signupPage(flash) {
     </div>
     <div id="tb-thanks" hidden></div>
     ${signupScript()}
-  `);
+  `, { index: true, path: '/signup' });
 }
 
 /* Client script for /signup. Submit -> AJAX POST /api/newbie -> save the minted
@@ -516,14 +548,17 @@ function welcomePage() {
         if it doesn't, just <a href="/signup">sign up again</a>.</p>
     </div>
     <p class="foot">Tango Buddy · Boston · a friendly free invitation, nothing more.</p>
-  `);
+  `, { index: true, path: '/welcome' });
 }
 
 /* ---------- page: smart router (GET /) -------------------------------------- */
-/* v0.7.0 — a tiny client-side shell. NEVER shows the signup form. It reads
- * localStorage.tb_token: has a token -> render the returning HOME (Welcome back
- * + Events one-tap check-in + history + quiet links); no token -> replace the
- * location with /welcome. <noscript> falls back to a /welcome link. */
+/* V1.0.0 (C4) — the front door. A tiny client-side shell; NEVER shows the signup
+ * form itself. It reads localStorage.tb_token and routes:
+ *   no token (new device)      -> /signup   (was /welcome; /welcome stays live)
+ *   valid token (returning)    -> /events   (greeted by the Hello banner there)
+ *   stale/unknown token (404)  -> clear it, then /signup as a new device
+ * The token is VALIDATED here rather than on /events, because /events is a public
+ * page anyone can hit directly — it must never bounce a stranger to /signup. */
 
 function rootShell() {
   return page('Boston Tango Buddies', `
@@ -531,15 +566,15 @@ function rootShell() {
     <noscript>
       <div class="card" style="text-align:center">
         <p class="lede" style="margin-bottom:8px">Welcome to Boston Tango Buddies.</p>
-        <p><a href="/welcome">Continue →</a></p>
+        <p><a href="/signup">Continue →</a></p>
       </div>
     </noscript>
     ${homeShellScript()}
-  `);
+  `, { index: true, path: '/' });
 }
 
-/* Client script for "/". Reuses the with-token home (fetches /api/me?token=…).
- * No token -> location.replace('/welcome'). Unknown token -> clear + /welcome.
+/* Client script for "/" (V1.0.0, C4). Validates the token against /api/me, then:
+ * no token -> /signup · valid -> /events · unknown/404 -> clear the token + /signup.
  * Zero-dependency vanilla JS. */
 function homeShellScript() {
   return `<script>
@@ -627,19 +662,27 @@ function homeShellScript() {
     wireShare();
   }
 
-  function loadHome(token){
+  // V1.0.0 (C4): the old rich in-place home (renderHome above) is RETAINED but no
+  // longer rendered — "/" is now a pure router to /events. renderHome() and its
+  // one-tap check-in wiring stay intact so restoring the old home is a one-line
+  // change here. NOTE: /events has no one-tap check-in of its own, so that surface
+  // is currently unreachable — flagged to Edison in PHASE-C-STATUS.md.
+  function routeReturning(token){
     fetch('/api/me?token='+encodeURIComponent(token),{headers:{'Accept':'application/json'}})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
-        if(!d||!d.newbie){clearToken();location.replace('/welcome');return;}
-        home.hidden=false;renderHome(d);
-        try{window.scrollTo(0,0);}catch(e){}
-      }).catch(function(){location.replace('/welcome');});
+        // Stale or unknown token -> drop it and treat this as a brand-new device.
+        if(!d||!d.newbie){clearToken();location.replace('/signup');return;}
+        location.replace('/events');
+      })
+      // Network failure: do NOT clear the token (it may be perfectly valid and the
+      // user merely offline). Send them to the public events page.
+      .catch(function(){location.replace('/events');});
   }
 
   var tok=getToken();
-  if(!tok){location.replace('/welcome');return;}
-  loadHome(tok);
+  if(!tok){location.replace('/signup');return;}
+  routeReturning(tok);
 })();
 </script>`;
 }
@@ -756,7 +799,7 @@ async function lessonsPage() {
       .dir-fine .dir-tel{white-space:nowrap}
       .dir-sep{color:var(--line)}
     </style>
-  `);
+  `, { index: true, path: '/lessons' });
 }
 
 /* ---------- page: public events listing (GET /events) ----------------------- */
@@ -900,11 +943,13 @@ async function eventsPage(flash) {
     </div>`;
 
   return page('Boston Tango Events', `
+    <div id="tb-hello" hidden></div>
     <span class="badge">Boston Tango · Events</span>
     <h1>Beginner-friendly events — <span class="accent">next 2 weeks</span></h1>
     <p class="lede">Events made for newcomers, near Boston. Come as you are.</p>
     ${heroBlock()}
     ${thanks}
+    ${helloBannerScript()}
     ${tiersHtml}
     ${moreBlock}
     <p class="foot">Tango Buddy · Boston · come dance — the whole city is your milonga.</p>
@@ -921,7 +966,46 @@ async function eventsPage(flash) {
       .tier-h:first-of-type{margin-top:6px}
       .tier-sub{color:var(--soft);font-size:14px;margin:0 0 12px}
     </style>
-  `);
+  `, { index: true, path: '/events' });
+}
+
+/* V1.0.0 (C4) — the "Hello, {FirstName}" banner on /events.
+ *
+ * Rendered CLIENT-side because the identity lives in localStorage.tb_token, and
+ * /events is a cacheable public page — the HTML must stay identical for everyone.
+ * A stranger with no token sees nothing at all (the div stays `hidden`).
+ *
+ * SECURITY: newbie.name is user-supplied and goes into the DOM, so it is written
+ * with textContent, never innerHTML — an attacker-chosen name like
+ * `<script>alert(1)</script>` renders as literal text and cannot execute. */
+function helloBannerScript() {
+  return `<script>
+(function(){
+  var LSK='tb_token';
+  var el=document.getElementById('tb-hello'); if(!el) return;
+  var tok; try{tok=localStorage.getItem(LSK);}catch(e){return;}
+  if(!tok) return;
+  fetch('/api/me?token='+encodeURIComponent(tok),{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){
+      // Unknown/expired token: drop it. No redirect — /events is public and a
+      // visitor reading it should never be bounced away mid-read.
+      if(!d||!d.newbie){try{localStorage.removeItem(LSK);}catch(e){} return;}
+      var name=String(d.newbie.name==null?'':d.newbie.name).trim();
+      var first=name?name.split(/\\s+/)[0]:'';
+      var h=document.createElement('p');
+      h.className='promise';
+      var b=document.createElement('b');
+      // Blank/missing name -> a plain greeting, never a dangling "Hello, ".
+      b.textContent = first ? ('Hello, '+first+'!') : 'Welcome back!';
+      h.appendChild(b);
+      h.appendChild(document.createTextNode(' Good to see you again — here is what is on.'));
+      el.appendChild(h);
+      el.hidden=false;
+    })
+    .catch(function(){});
+})();
+</script>`;
 }
 
 /* ---------- page: admin dashboard (GET /admin) ------------------------------ */
@@ -1519,6 +1603,36 @@ async function requestListener(req, res) {
     // --- GET routes ---
     if (req.method === 'GET') {
       if (pathname === '/') return send(res, 200, rootShell());
+
+      // --- V1.0.0 (C5): crawler contract. Both of these 404'd before, which (with
+      // the blanket noindex) meant Google could verify the domain and index
+      // NOTHING. PUBLIC_ROUTES is the single source of truth for the sitemap and
+      // it is an allow-list: a route only gets crawled if it is named here AND
+      // its page() call passes index:true.
+      if (pathname === '/robots.txt') {
+        return send(res, 200, [
+          'User-agent: *',
+          'Allow: /',
+          'Disallow: /admin',
+          'Disallow: /api/',
+          `Sitemap: ${SITE_ORIGIN}/sitemap.xml`,
+          '',
+        ].join('\n'), 'text/plain; charset=utf-8');
+      }
+      if (pathname === '/sitemap.xml') {
+        const urls = PUBLIC_ROUTES
+          .map((p) => `  <url><loc>${esc(SITE_ORIGIN + p)}</loc></url>`)
+          .join('\n');
+        return send(res, 200,
+          `<?xml version="1.0" encoding="UTF-8"?>\n`
+          + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`,
+          'application/xml; charset=utf-8');
+      }
+      // The version used to be visible in the drawer footer; the drawer is hidden
+      // at launch, so this is where the running build identifies itself.
+      if (pathname === '/api/health') {
+        return sendJson(res, 200, { ok: true, app: 'boston-tango-buddies', version: VERSION });
+      }
       if (pathname === '/signup') return send(res, 200, signupPage(url.searchParams.get('flash')));
       if (pathname === '/welcome') return send(res, 200, welcomePage());
       if (pathname === '/volunteer') return send(res, 200, volunteerPage(url.searchParams.get('flash')));
@@ -1543,9 +1657,15 @@ async function requestListener(req, res) {
         }
         return send(res, 200, await adminPage(url.searchParams.get('flash')));
       }
-      if (pathname === '/chat') return send(res, 200, await chatPage({
-        id: url.searchParams.get('id'), as: url.searchParams.get('as'),
-      }));
+      // V1.0.0 (C3): /chat is REMOVED from the product — unreachable, unlinked,
+      // unindexed. The chatPage() implementation and the /api/chat POST handler are
+      // deliberately RETAINED, dead but intact: restoring chat is deleting this
+      // redirect and restoring the line beneath it. Deleting working code at the
+      // moment of launch is free today and expensive later.
+      if (pathname === '/chat') return redirect(res, '/events');
+      // if (pathname === '/chat') return send(res, 200, await chatPage({
+      //   id: url.searchParams.get('id'), as: url.searchParams.get('as'),
+      // }));
       if (pathname === '/social') return send(res, 200, await socialPage());
       if (pathname === '/coming') return send(res, 200, comingPage());
       if (pathname === '/more') return send(res, 200, morePage());
@@ -1730,7 +1850,8 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`Tango Buddy POC running -> http://localhost:${PORT}`);
     console.log(`Store backend: ${store.USE_FIRESTORE ? 'Firestore (firebase-admin)' : 'local JSON (data/db.json)'}`);
-    console.log('Routes: /  /signup  /welcome  /volunteer  /lessons  /events  /more  /admin   (Ctrl-C to stop)');
+    console.log('Public: /  /signup  /events  /lessons  /welcome  ·  robots.txt  sitemap.xml');
+    console.log('Unlinked (URL only): /volunteer  /social  /coming  /more  /updates  /ideas  /todo  /admin');
   });
 }
 
