@@ -160,6 +160,12 @@ const SITE_ORIGIN = 'https://bostontangobuddies.com';
 // not a landing page and must never be indexable.
 const PUBLIC_ROUTES = ['/', '/signup', '/events', '/lessons'];
 
+// V1.1.0 (D6a) — the community room. In-app chat is gone; we point at a group
+// that already exists. Emitted ONLY inside a valid-token branch, never in markup
+// a crawler or a stranger can read: a WhatsApp invite link is a permanent open
+// door, so an indexed page carrying one gets the group scraped and joined.
+const WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/IhUuRIYcrgU2pCQPzg1l68';
+
 /* Indexability is FAIL-CLOSED (V1.0.0, C5). Every page is noindex,nofollow unless
  * it explicitly passes `index: true` — so a page added later is private by default
  * and someone has to opt IN to publishing it. This is deliberate: /admin, /social,
@@ -572,47 +578,175 @@ function signupScript() {
 </script>`;
 }
 
-/* ---------- page: no-cookie welcome (GET /welcome) -------------------------- */
-/* v0.7.0 — a warm intro for someone who lands WITHOUT a token (the smart router
- * at "/" sends no-token devices here). No money words. Get started -> /signup. */
+/* ---------- the mission copy (V1.1.0 D4b) ----------------------------------- */
+/* Toby's four beats. Rendered SERVER-SIDE so a crawler and a JS-less visitor both
+ * get real content, and so a curious stranger meets an explanation rather than a
+ * form. Shared by "/" and the stranger state of /welcome.
+ *
+ * Beat 4 ("not about money") deliberately gets its own block and plain sentences:
+ * a free stranger offering help reads as a catch until you say there is no catch,
+ * so it must not be softened, shortened or moved into the footer. */
+function missionBody() {
+  return `
+    <span class="badge">Boston Tango</span>
+    <h1>Tango is wonderful. <span class="accent">It is also intimidating.</span></h1>
+    <p class="lede">Both things are true, and anyone who tells you otherwise has forgotten
+      their first night. The music is strange, everyone seems to know each other, and there
+      are rules nobody writes down.</p>
+    ${heroBlock()}
+    <div class="card">
+      <p style="margin:0 0 14px">It takes time to learn. That part does not shorten. What
+        changes is whether you walk it on your own.</p>
+      <p style="margin:0 0 14px"><b>There are people here who want to help you.</b> Not to
+        teach you, not to sell you anything: to be the familiar face who tells you which
+        milonga is kind on a Tuesday, what the codes mean, and who to say hello to. We pair
+        you with one of them, and we point you at the studios, the milongas, the practicas
+        and the teachers. Think of us as the map.</p>
+      <p class="promise" style="margin:0"><b>This is not about money.</b> We sell nothing.
+        We take no cut. We are not a school and we are not anybody's booking agent. We just
+        want you to learn tango, from someone, and dance.</p>
+    </div>`;
+}
+
+/* ---------- page: welcome — ONE PAGE, TWO STATES (V1.2.0 F2d) ---------------- */
+/* Supersedes the V1.0.0 C4 front door and the original D2/D3 routing.
+ *
+ *  STRANGER (no usable token): the mission copy + a warm invitation to sign up.
+ *  Deliberately NO form wall — dropping a curious stranger into a form is exactly
+ *  the intimidation the mission copy exists to defuse.
+ *  KNOWN (valid token): Hello {FirstName} + the personal home (D3, in progress).
+ *
+ * The stranger state is the SERVER-RENDERED default and the known state is swapped
+ * in by JS, because identity lives in localStorage and /welcome must stay a single
+ * cacheable page. That ordering is also the safe one: a crawler, a JS-less browser
+ * and a stranger all see the same public content, and nothing personal is ever in
+ * the markup. /welcome is noindex regardless (Amendment 5). */
 
 function welcomePage() {
   return page('Boston Tango Buddies', `
-    <span class="badge">Boston Tango</span>
-    <h1>Welcome to <span class="accent">Boston Tango Buddies</span></h1>
-    <p class="lede">We pair newcomers with a buddy — someone to learn tango beside you — and a
-      free first lesson, so nobody learns alone.</p>
-    ${heroBlock()}
-    <div class="card">
-      <p class="promise">We're tango dancers who still remember the first-night nerves.
-        Come dance with us: a friendly face, a place to start, and someone in your corner
-        from your very first step to the milonga floor.</p>
-      <a class="submit" href="/signup" style="display:block;text-align:center;text-decoration:none">Get started</a>
-      <p class="foot" style="margin-top:16px">Been here before? Your phone should remember you —
-        if it doesn't, just <a href="/signup">sign up again</a>.</p>
+    <div id="tb-known" hidden></div>
+    <div id="tb-stranger">
+      ${missionBody()}
+      <div class="card" style="text-align:center">
+        <p class="lede" style="margin-bottom:14px">Want a buddy of your own?</p>
+        <a class="submit" href="/signup"
+          style="display:block;text-align:center;text-decoration:none">Get started</a>
+        <p class="foot" style="margin-top:16px">Been here before? Your phone should remember you.
+          If it doesn't, just <a href="/signup">sign up again</a>.</p>
+      </div>
+      <p class="foot">Tango Buddy · Boston · a friendly free invitation, nothing more.</p>
     </div>
-    <p class="foot">Tango Buddy · Boston · a friendly free invitation, nothing more.</p>
+    ${welcomeStateScript()}
   `);
 }
 
-/* ---------- page: smart router (GET /) -------------------------------------- */
-/* V1.0.0 (C4) — the front door. A tiny client-side shell; NEVER shows the signup
- * form itself. It reads localStorage.tb_token and routes:
- *   no token (new device)      -> /signup   (was /welcome; /welcome stays live)
- *   valid token (returning)    -> /events   (greeted by the Hello banner there)
- *   stale/unknown token (404)  -> clear it, then /signup as a new device
- * The token is VALIDATED here rather than on /events, because /events is a public
- * page anyone can hit directly — it must never bounce a stranger to /signup. */
+/* Client script for /welcome. Swaps the stranger state for the personal home when
+ * a valid device token is present. A stale/unknown token is cleared and the
+ * stranger state simply stays — no redirect, because /welcome is now the front
+ * door and bouncing someone out of it would loop.
+ *
+ * The known state is built with DOM methods and textContent for anything
+ * user-supplied. The WhatsApp group invite is emitted ONLY here, inside the
+ * token branch, so it never appears in markup a crawler or a stranger can read
+ * (Amendment 5 — an invite link is a permanent open door for anyone holding it). */
+function welcomeStateScript() {
+  return `<script>
+(function(){
+  var LSK='tb_token';
+  var known=document.getElementById('tb-known');
+  var stranger=document.getElementById('tb-stranger');
+  if(!known||!stranger) return;
+  var tok; try{tok=localStorage.getItem(LSK);}catch(e){return;}
+  if(!tok) return;
+
+  function el(tag,cls,text){
+    var n=document.createElement(tag);
+    if(cls)n.className=cls;
+    if(text!=null)n.textContent=text;   // never innerHTML for user-supplied text
+    return n;
+  }
+
+  fetch('/api/me?token='+encodeURIComponent(tok),{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){
+      if(!d||!d.newbie){try{localStorage.removeItem(LSK);}catch(e){} return;}
+      var name=String(d.newbie.name==null?'':d.newbie.name).trim();
+      var first=name?name.split(/\\s+/)[0]:'';
+
+      known.appendChild(el('span','badge','Boston Tango'));
+      var h=el('h1'); h.appendChild(document.createTextNode(first?('Hello, '+first):'Welcome back'));
+      known.appendChild(h);
+      known.appendChild(el('p','lede',
+        'Tango is wonderful, and intimidating. Both are true. It takes time, and you do not '
+        + 'have to do it alone. No money changes hands here: we sell nothing and take no cut. '
+        + 'We just want you dancing.'));
+
+      // Standing action 2 (D4a) — the community room. The URL arrives from
+      // /api/me (token-gated) and is never present in this page's source.
+      if(d.groupUrl){
+        var card=el('div','card');
+        card.appendChild(el('h3',null,'Join the Tango Practice Adventurers'));
+        card.appendChild(el('p',null,
+          'The wider community room on WhatsApp, where people finding their way in talk to '
+          + 'each other. It is not a private chat with your buddy.'));
+        var a=el('a',null,'Open the group in WhatsApp');
+        a.href=d.groupUrl;
+        a.target='_blank'; a.rel='noopener noreferrer';
+        a.className='submit';
+        a.style.display='block'; a.style.textAlign='center'; a.style.textDecoration='none';
+        card.appendChild(a);
+        known.appendChild(card);
+      }
+
+      // Standing action 3 (D4a) — the real next step.
+      var lessons=el('div','card');
+      lessons.appendChild(el('h3',null,'Reach out to a studio'));
+      lessons.appendChild(el('p',null,
+        'When you are ready for real lessons, the Boston studios that teach beginners are '
+        + 'listed with their phone numbers and websites.'));
+      var la=el('a',null,'See the studios');
+      la.href='/lessons';
+      lessons.appendChild(la);
+      known.appendChild(lessons);
+
+      // TODO (D3/D4a): events feed with one-tap check-in, plus check-in history
+      // rendered FROM THE SNAPSHOT on each row (D4a-i), never a live lookup.
+
+      stranger.hidden=true;
+      known.hidden=false;
+      try{window.scrollTo(0,0);}catch(e){}
+    })
+    .catch(function(){});
+})();
+</script>`;
+}
+
+/* ---------- page: the front door (GET /) ------------------------------------ */
+/* V1.2.0 (F2d) — SUPERSEDES the V1.0.0 C4 routing (no token -> /signup) and the
+ * original D2/D3 routing. There is no form wall at the front door any more.
+ *
+ *   stranger  -> stays HERE, reading the mission copy. Signup is an invitation,
+ *                not a toll gate.
+ *   known     -> /welcome, the personal home.
+ *
+ * ⚠️ DELIBERATE DEVIATION from F2d as written, flagged in PHASE-D-STATUS.md.
+ * F2d says "/ routes to /welcome in BOTH cases". Doing that literally would send
+ * crawlers from our ONE indexable landing page into /welcome, which is
+ * noindex,nofollow by Amendment 5 — deindexing the homepage and undoing the C5
+ * work that just shipped. So the stranger STATE is served at "/" rather than
+ * redirected to: identical content, same no-form-wall intent, but "/" keeps real
+ * indexable copy and only token-holders travel to /welcome. Both pages render the
+ * same stranger state, so a direct hit on either behaves the same. */
 
 function rootShell() {
   return page('Boston Tango Buddies', `
-    <div id="tb-home" hidden></div>
-    <noscript>
-      <div class="card" style="text-align:center">
-        <p class="lede" style="margin-bottom:8px">Welcome to Boston Tango Buddies.</p>
-        <p><a href="/signup">Continue →</a></p>
-      </div>
-    </noscript>
+    ${missionBody()}
+    <div class="card" style="text-align:center">
+      <p class="lede" style="margin-bottom:14px">Want a buddy of your own?</p>
+      <a class="submit" href="/signup"
+        style="display:block;text-align:center;text-decoration:none">Get started</a>
+    </div>
+    <p class="foot">Tango Buddy · Boston · a friendly free invitation, nothing more.</p>
     ${homeShellScript()}
   `, { index: true, path: '/' });
 }
@@ -706,26 +840,24 @@ function homeShellScript() {
     wireShare();
   }
 
-  // V1.0.0 (C4): the old rich in-place home (renderHome above) is RETAINED but no
-  // longer rendered — "/" is now a pure router to /events. renderHome() and its
-  // one-tap check-in wiring stay intact so restoring the old home is a one-line
-  // change here. NOTE: /events has no one-tap check-in of its own, so that surface
-  // is currently unreachable — flagged to Edison in PHASE-C-STATUS.md.
+  // V1.2.0 (F2d): "/" no longer routes strangers anywhere. renderHome() above is
+  // retained and still unused; D3 will resurrect it inside /welcome's known state.
   function routeReturning(token){
     fetch('/api/me?token='+encodeURIComponent(token),{headers:{'Accept':'application/json'}})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
-        // Stale or unknown token -> drop it and treat this as a brand-new device.
-        if(!d||!d.newbie){clearToken();location.replace('/signup');return;}
-        location.replace('/events');
+        // Stale or unknown token -> drop it and just show the mission copy already
+        // on this page. No redirect: a stranger belongs here.
+        if(!d||!d.newbie){clearToken();return;}
+        location.replace('/welcome');
       })
-      // Network failure: do NOT clear the token (it may be perfectly valid and the
-      // user merely offline). Send them to the public events page.
-      .catch(function(){location.replace('/events');});
+      // Network failure: do NOT clear the token (they may simply be offline) and
+      // do not redirect — the page they are on is already the right fallback.
+      .catch(function(){});
   }
 
   var tok=getToken();
-  if(!tok){location.replace('/signup');return;}
+  if(!tok) return;          // stranger: the mission copy is already rendered
   routeReturning(tok);
 })();
 </script>`;
@@ -1821,6 +1953,11 @@ async function requestListener(req, res) {
         return sendJson(res, 200, {
           // Only expose what the home needs (no contact / consent leakage).
           newbie: { id: newbie.id, name: newbie.name, status: newbie.status },
+          // D6a: the group invite is delivered HERE, behind the token check, and
+          // never embedded in any page — not in markup, not in an inline script.
+          // An invite link is a permanent open door for whoever holds it, and a
+          // scraper reads inline <script> source just as easily as a <a href>.
+          groupUrl: WHATSAPP_GROUP_URL,
           events: await store.listEvents(),
           checkins: await store.listCheckinsForNewbie(newbie.id),
         });
