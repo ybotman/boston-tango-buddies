@@ -1,6 +1,6 @@
 {
   "name": "tango-buddy-poc",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
     "dev": "node app.js"

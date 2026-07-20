@@ -521,9 +521,16 @@ function signupPage(flash) {
         <p class="promise">We are not selling anything. <b>It is all free.</b> We are tango
           enthusiasts who want you to learn, and we will be your buddy along the way.
           We just want you to tango.</p>
+        <p class="promise" id="tb-formerr" role="alert" hidden
+          style="background:#ffe9e2;border-color:#f3c4b3"></p>
         <form method="POST" action="/api/newbie">
-          <label class="fld" for="name">Your name</label>
-          <input id="name" name="name" type="text" autocomplete="name" placeholder="First name is fine" required />
+          <label class="fld" for="firstName">First name</label>
+          <input id="firstName" name="firstName" type="text" autocomplete="given-name"
+            placeholder="First name" required />
+
+          <label class="fld" for="lastName">Last name</label>
+          <input id="lastName" name="lastName" type="text" autocomplete="family-name"
+            placeholder="Last name" required />
 
           <label class="fld" for="platform">Best way to reach you</label>
           <select id="platform" name="platform" required>
@@ -533,7 +540,48 @@ function signupPage(flash) {
 
           <label class="fld" for="contact">Your handle / number / email</label>
           <input id="contact" name="contact" type="text" placeholder="e.g. @yourname, 617-555-0123, you@email.com" required />
-          <p class="hint">One is plenty. We will reach out about your free lesson.</p>
+
+          <label class="fld" for="platform2">A second way, if you have one
+            <span style="font-weight:500;color:#a98a76">(optional)</span></label>
+          <select id="platform2" name="platform2">
+            <option value="" selected>No second method</option>
+            ${options}
+          </select>
+          <input id="contact2" name="contact2" type="text" style="margin-top:8px"
+            placeholder="Handle, number or email" />
+          <p class="hint">Only if it is easy. One way to reach you is plenty.</p>
+
+          <!-- D1a: wantsBuddy. Deliberately NOT pre-selected and deliberately not
+               framed as opting out of the good thing — plenty of people just want to
+               know where the beginner-friendly nights are, and that is a completely
+               fine thing to want. Required, so we never have to infer it. -->
+          <label class="fld">Would you like a tango buddy?</label>
+          <div class="consent" style="align-items:flex-start">
+            <input id="wantsBuddyYes" name="wantsBuddy" type="radio" value="yes" required />
+            <label for="wantsBuddyYes"><b>Yes please</b> — pair me with someone
+              who can show me the ropes.</label>
+          </div>
+          <div class="consent" style="align-items:flex-start">
+            <input id="wantsBuddyNo" name="wantsBuddy" type="radio" value="no" />
+            <label for="wantsBuddyNo"><b>No thanks</b> — just tell me where the
+              beginner-friendly events are. That is genuinely fine.</label>
+          </div>
+
+          <label class="fld" for="dancedBefore">Have you danced before?</label>
+          <select id="dancedBefore" name="dancedBefore">
+            <option value="" selected>Rather not say</option>
+            <option value="yes">Yes, some kind of dancing</option>
+            <option value="no">No, never</option>
+          </select>
+          <input id="dancedWhat" name="dancedWhat" type="text" style="margin-top:8px"
+            placeholder="If yes — what? salsa, swing, ballroom…" />
+
+          <label class="fld" for="dancedTangoBefore">Have you danced tango before?</label>
+          <select id="dancedTangoBefore" name="dancedTangoBefore">
+            <option value="" selected>Rather not say</option>
+            <option value="yes">Yes, a little</option>
+            <option value="no">No, never</option>
+          </select>
 
           <label class="fld" for="origination">How did you find us?</label>
           <select id="origination" name="origination">
@@ -615,8 +663,19 @@ function signupScript() {
         body:body})
         .then(function(r){return r.json();})
         .then(function(d){
-          if(d&&d.token){setToken(d.token);showThanks();}
-          else{location.href='/signup?flash=thanks';}
+          if(d&&d.token){setToken(d.token);showThanks();return;}
+          // D7: a rejection is NOT a thank-you. This previously sent anyone whose
+          // submission was refused to ?flash=thanks — telling a real person their
+          // details were saved when nothing was written. Show what is missing and
+          // leave them on their filled-in form.
+          if(d&&d.error){
+            var box=document.getElementById('tb-formerr');
+            if(box){box.textContent=d.error;box.hidden=false;
+              try{box.scrollIntoView({block:'center'});}catch(e){}}
+            else{alert(d.error);}
+            return;
+          }
+          location.href='/signup';
         }).catch(function(){form.submit();});
     });
   }
@@ -1331,8 +1390,51 @@ async function adminPage(flash) {
       : '<span class="pill new">new</span>';
     const consentPill = n.consent
       ? '<span class="pill yes">yes</span>' : '<span class="pill no">no</span>';
-    // Per-newbie match control -> POST /api/match
-    const matchControl = volunteers.length ? `
+    // D1a: wantsBuddy is a TRI-STATE and must be rendered as one.
+    //   true      -> they asked for a buddy
+    //   false     -> they explicitly declined. An explicit no is a real refusal.
+    //   undefined -> NOBODY EVER ASKED. This is the case for all seven backfilled
+    //                historical newcomers. Rendering that as "no" would be a
+    //                factual claim about a real person that Toby might act on.
+    const wantsBuddy = n.wantsBuddy;
+    const askedForBuddy = wantsBuddy === true;
+    const declinedBuddy = wantsBuddy === false;
+    const neverAsked = !askedForBuddy && !declinedBuddy;
+    const wantsBuddyPill = askedForBuddy
+      ? '<span class="pill yes">wants a buddy</span>'
+      : declinedBuddy
+        ? '<span class="pill no">no buddy, thanks</span>'
+        : '<span class="pill new" title="This person signed up before we asked. '
+          + 'It is not a no.">never asked</span>';
+
+    // Dance history — also tri-state, same rule. "not asked" must never render as
+    // "no": someone who has salsa-d for ten years needs a completely different
+    // welcome from someone who has never danced, and a wrong "no" here sends the
+    // wrong one. The seven historical rows DO carry these answers from the old
+    // Formspree form, so this is recovered continuity, not a new question.
+    const triLabel = (v, yes, no) => (v === true ? yes : v === false ? no : null);
+    const danceBits = [
+      triLabel(n.dancedTangoBefore, 'danced tango', 'new to tango'),
+      triLabel(n.dancedBefore, n.dancedWhat ? `danced: ${n.dancedWhat}` : 'danced before',
+        'never danced'),
+    ].filter(Boolean);
+    const danceLabel = danceBits.length
+      ? `<div class="hint" style="margin-top:4px">${esc(danceBits.join(' · '))}</div>`
+      : '';
+
+    // Per-newbie match control -> POST /api/match.
+    // Hidden ONLY for an explicit decline. Shown-but-badged for "never asked":
+    // the seven real newcomers all predate the question, so hiding it for
+    // anything short of an explicit yes would make matching impossible for every
+    // real person in the system and the product could never run. Badging keeps
+    // the operator honest about which he is relying on — an inference, not
+    // consent. Flagged to Edison in PHASE-D-STATUS.md.
+    const matchControl = declinedBuddy
+      ? '<span class="empty" style="padding:0" title="They declined a buddy at signup.">'
+        + 'declined — not matchable</span>'
+      : !volunteers.length
+        ? '<span class="empty" style="padding:0">no volunteers yet</span>'
+        : `
       <form class="match-form" method="POST" action="/api/match">
         <input type="hidden" name="newbieId" value="${esc(n.id)}" />
         <select name="volunteerId">
@@ -1340,7 +1442,9 @@ async function adminPage(flash) {
           ${volOptions}
         </select>
         <button type="submit">Assign</button>
-      </form>` : '<span class="empty" style="padding:0">no volunteers yet</span>';
+      </form>${neverAsked
+        ? '<div class="hint" style="margin-top:4px">never asked — check before pairing</div>'
+        : ''}`;
     // V1.1: check-in history (the retention signal — "where they go").
     const checkins = checkinsByNewbie[n.id] || [];
     const evById = Object.fromEntries(events.map((e) => [e.id, e]));
@@ -1379,6 +1483,7 @@ async function adminPage(flash) {
       <td>${esc(n.contact)}</td>
       <td>${esc(n.platform)}</td>
       <td>${esc(n.origination) || '<span class="empty" style="padding:0">—</span>'}</td>
+      <td>${wantsBuddyPill}${danceLabel}</td>
       <td>${consentPill}</td>
       <td>${statusPill}</td>
       <td>${buddyLabel}</td>
@@ -1386,7 +1491,7 @@ async function adminPage(flash) {
       <td>${checkinLabel}</td>
       <td>${readyPill}${readyForm}${handoverControl}</td>
     </tr>`;
-  }).join('') : `<tr><td colspan="10" class="empty">No newbies captured yet. Try the
+  }).join('') : `<tr><td colspan="11" class="empty">No newbies captured yet. Try the
       <a href="/signup">sign-up page</a>.</td></tr>`;
 
   const volRows = volunteers.length ? volunteers.map((v) => {
@@ -1528,7 +1633,7 @@ async function adminPage(flash) {
     <div class="card">
       <h3 style="margin:0 0 12px">Newbies</h3>
       <div class="scroll"><table>
-        <thead><tr><th>Name</th><th>Contact</th><th>Platform</th><th>Found us</th><th>Consent</th>
+        <thead><tr><th>Name</th><th>Contact</th><th>Platform</th><th>Found us</th><th>Buddy?</th><th>Consent</th>
           <th>Status</th><th>Buddy</th><th>Match</th><th>Check-ins</th><th>Lessons handover</th></tr></thead>
         <tbody>${newbieRows}</tbody>
       </table></div>
@@ -2085,12 +2190,23 @@ async function requestListener(req, res) {
         // store.addNewbie persists them — deliberately NOT validated yet, because
         // requiring fields the store would silently drop is worse than not asking.)
         const problems = requireFields(body, [
-          ['name', 'your name'],
-          ['contact', 'a way to reach you'],
+          ['firstName', 'your first name'],
+          ['lastName', 'your last name'],
           ['platform', 'how to reach you'],
+          ['contact', 'a way to reach you'],
         ]);
+        // D1a: wantsBuddy is REQUIRED so we never have to infer it. "no" is a
+        // perfectly good answer; what we refuse to accept is silence, because an
+        // unanswered question later becomes a guess about a real person.
+        if (body.wantsBuddy !== 'yes' && body.wantsBuddy !== 'no') {
+          problems.push('whether you would like a buddy');
+        }
         if (!isChecked(body.consent)) problems.push('your consent to be contacted');
         if (problems.length) return rejectPost(req, res, '/signup', problems);
+        // dancedBefore / dancedTangoBefore stay OPTIONAL and are passed through
+        // only when answered — an empty select must reach the store as absent, so
+        // it records "not asked" rather than asserting "no". Same rule Franklin
+        // baked into addNewbie (7ae20ad): absent is never coerced to false.
 
         // V1.2: mint the device token and return it so the client can save it to
         // localStorage (tb_token). AJAX callers ask for JSON; a plain no-JS POST
