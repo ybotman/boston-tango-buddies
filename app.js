@@ -1926,12 +1926,28 @@ async function requestListener(req, res) {
       // if (pathname === '/chat') return send(res, 200, await chatPage({
       //   id: url.searchParams.get('id'), as: url.searchParams.get('as'),
       // }));
-      if (pathname === '/social') return send(res, 200, await socialPage());
-      if (pathname === '/coming') return send(res, 200, comingPage());
-      if (pathname === '/more') return send(res, 200, morePage());
-      if (pathname === '/updates') return send(res, 200, await updatesPage());
-      if (pathname === '/ideas') return send(res, 200, await ideasPage());
-      if (pathname === '/todo') return send(res, 200, await todoPage());
+      // 🔴 V1.1.0 (D6): the seven removed routes. UNREACHABLE, implementations
+      // retained in the file exactly as agreed for /chat — deleting these six
+      // lines restores them.
+      //
+      // /social was an ACTIVE PII LEAK on production: socialPage() builds a
+      // <datalist> from listNewbies(), so from the moment real people landed in
+      // D1 the page served every newcomer's name to anyone who asked. They gave
+      // a phone number at a tango event expecting to be contacted about tango;
+      // they did not consent to being listed on a public web page.
+      //
+      // Killing POST /api/social was only half of D6 — the READ path leaked
+      // without any write. Lesson worth keeping: "disable the endpoint" and
+      // "make the route unreachable" are two different jobs, and for a page that
+      // RENDERS personal data the second one is the urgent half.
+      if (pathname === '/social'
+        || pathname === '/coming'
+        || pathname === '/more'
+        || pathname === '/updates'
+        || pathname === '/ideas'
+        || pathname === '/todo') {
+        return redirect(res, '/');
+      }
       if (pathname === '/api/thread') {
         const id = url.searchParams.get('id');
         return sendJson(res, 200, { id, messages: id ? await store.listMessages(id) : [] });
