@@ -42,7 +42,7 @@
  *   listMessages(threadId) · postMessage(threadId, fromName, body)
  *   listEvents() · addEvent(data) · updateEvent(eventId, data)
  *   addOrganizer(data) · updateOrganizer(orgId, data)
- *   checkIn(newbieId, eventId, status) · listCheckinsForNewbie(newbieId)
+ *   checkIn(newbieId, eventId, status, eventSnapshot?) · listCheckinsForNewbie(newbieId)
  *   setReady(newbieId, ready) · setHandover(newbieId, organizerId)
  *   listUpdates() · listIdeas() · listTodos()
  *
@@ -59,7 +59,14 @@
  *               (ttId/url/shortName/orgName/startDate/venueName/category/image are the
  *                TangoTiempo-pulled fields; title/type/date/time/location remain for
  *                legacy/manual events + the token-home landing.)
- *   checkin   { id, newbieId, eventId, status, when }   status: 'going' | 'went'
+ *   checkin   { id, newbieId, eventId, status, when, updatedAt,
+ *               eventTitle, eventDate, eventOrg, eventUrl }
+ *               status: 'going' | 'went'
+ *               id is DERIVED as c_<newbieId>_<eventId> -> one row per pair (upsert).
+ *               when = first check-in (stable); updatedAt = last change.
+ *               event* = snapshot of the event AT CHECK-IN TIME. Events are live
+ *               from a rolling 2-week feed, so history must render from these
+ *               fields, never from a live event lookup. May be absent on legacy rows.
  * ========================================================================== */
 
 'use strict';
@@ -553,15 +560,56 @@ async function updateOrganizer(orgId, data) {
   return organizer;
 }
 
-async function checkIn(newbieId, eventId, status) {
+// One check-in per (newbieId, eventId). The id is DERIVED from the pair rather
+// than random, so backend.set() upserts naturally: a second tap on the same
+// event updates the existing row instead of inserting a duplicate. Without this
+// a nervous double-tap inflates the retention numbers (it already happened —
+// two identical 'went' rows landed 0.5s apart during testing).
+function checkinId(newbieId, eventId) {
+  const safe = (s) => String(s == null ? '' : s).replace(/[^A-Za-z0-9_-]/g, '');
+  return `c_${safe(newbieId)}_${safe(eventId)}`;
+}
+
+/**
+ * Record (or update) a newbie's check-in against an event.
+ *
+ * @param {string} newbieId
+ * @param {string} eventId
+ * @param {string} status          'going' | 'went'  (anything else -> 'going')
+ * @param {object} [eventSnapshot] { eventTitle, eventDate, eventOrg, eventUrl }
+ *
+ * WHY THE SNAPSHOT: events come live from the appId=1 feed on a rolling TWO-WEEK
+ * window, so an event referenced only by `eventId` becomes unresolvable a
+ * fortnight later and the history renders as "(event removed)". Copying the
+ * display fields onto the check-in row at the moment it happens is what keeps
+ * the retention signal readable forever. RENDER HISTORY FROM THESE FIELDS,
+ * never from a live event lookup.
+ */
+async function checkIn(newbieId, eventId, status, eventSnapshot) {
+  const rowId = checkinId(newbieId, eventId);
+  const existing = await backend.get('checkins', rowId);
+  const snap = eventSnapshot || {};
+  const str = (v) => (v == null ? '' : String(v).trim());
+
   const checkin = {
-    id: id('c'),
+    id: rowId,
     newbieId,
     eventId,
     status: status === 'went' ? 'went' : 'going',
-    when: new Date().toISOString(),
+    // `when` = when they FIRST checked in; preserved across re-taps so the
+    // history keeps a stable order and re-tapping an old event does not yank it
+    // to the top of the list.
+    when: (existing && existing.when) || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    // Event snapshot. On a re-tap, only overwrite a field when the caller
+    // actually supplied it — a later status-only call must not blank out a
+    // snapshot captured earlier.
+    eventTitle: str(snap.eventTitle) || (existing && existing.eventTitle) || '',
+    eventDate: str(snap.eventDate) || (existing && existing.eventDate) || '',
+    eventOrg: str(snap.eventOrg) || (existing && existing.eventOrg) || '',
+    eventUrl: str(snap.eventUrl) || (existing && existing.eventUrl) || '',
   };
-  await backend.set('checkins', checkin.id, checkin);
+  await backend.set('checkins', rowId, checkin);
   return checkin;
 }
 
@@ -569,7 +617,9 @@ async function listCheckinsForNewbie(newbieId) {
   const all = await backend.all('checkins');
   return all
     .filter((c) => c.newbieId === newbieId)
-    .sort((a, b) => b.when.localeCompare(a.when));
+    // Newest first. Tolerant of rows written before `when` was guaranteed and of
+    // legacy rows with no snapshot fields — every read must tolerate absence.
+    .sort((a, b) => String(b.when || '').localeCompare(String(a.when || '')));
 }
 
 async function setReady(newbieId, ready) {

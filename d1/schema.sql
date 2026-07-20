@@ -103,10 +103,18 @@ FROM docs WHERE collection='messages';
 DROP VIEW IF EXISTS checkins;
 CREATE VIEW checkins AS
 SELECT id,
-       json_extract(json,'$.newbieId') AS newbieId,
-       json_extract(json,'$.eventId')  AS eventId,
-       json_extract(json,'$.status')   AS status,
-       json_extract(json,'$.when')     AS "when"
+       json_extract(json,'$.newbieId')   AS newbieId,
+       json_extract(json,'$.eventId')    AS eventId,
+       json_extract(json,'$.status')     AS status,
+       json_extract(json,'$.when')       AS "when",
+       json_extract(json,'$.updatedAt')  AS updatedAt,
+       -- Event snapshot taken AT CHECK-IN TIME. Events come from a rolling
+       -- 2-week live feed, so these are the only durable record of what the
+       -- person actually attended. NULL on rows written before the snapshot existed.
+       json_extract(json,'$.eventTitle') AS eventTitle,
+       json_extract(json,'$.eventDate')  AS eventDate,
+       json_extract(json,'$.eventOrg')   AS eventOrg,
+       json_extract(json,'$.eventUrl')   AS eventUrl
 FROM docs WHERE collection='checkins';
 
 DROP VIEW IF EXISTS events;
