@@ -203,10 +203,19 @@ const SITE_ORIGIN = 'https://bostontangobuddies.com';
 const PUBLIC_ROUTES = ['/', '/signup', '/events', '/lessons'];
 
 // V1.1.0 (D6a) — the community room. In-app chat is gone; we point at a group
-// that already exists. Emitted ONLY inside a valid-token branch, never in markup
-// a crawler or a stranger can read: a WhatsApp invite link is a permanent open
-// door, so an indexed page carrying one gets the group scraped and joined.
-const WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/IhUuRIYcrgU2pCQPzg1l68';
+// that already exists.
+//
+// 🔴 NEVER put this URL in any page's markup. A WhatsApp group invite is a
+// PERMANENT OPEN DOOR: anyone holding the URL joins, with no approval, forever.
+// It is served ONLY by /api/me behind a valid device token (see the /group page
+// and the /welcome known state) — not as an href, not inside an inline script,
+// not hidden with CSS. noindex does not stop scrapers; absence does.
+//
+// 2026-07-21: repointed to a DIFFERENT group. The old link was
+// "Tango Practice Adventurers"; this one is "Boston Tango Newbies". Any copy
+// naming the group must use the new name.
+const WHATSAPP_GROUP_NAME = 'Boston Tango Newbies';
+const WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/HfrfDUGFzvL31DeWD4WWgC';
 
 /* Indexability is FAIL-CLOSED (V1.0.0, C5). Every page is noindex,nofollow unless
  * it explicitly passes `index: true` — so a page added later is private by default
@@ -403,9 +412,11 @@ function page(title, body, opts) {
   <a href="/signup">Learn tango</a>
   <a href="/events">Events</a>
   <a href="/lessons">Lessons</a>
+  <a href="/group">Newbies group</a>
 </div>
 ${body}
 </div>
+${siteFooter()}
 ${bottomDrawer()}
 </body></html>`;
 }
@@ -419,6 +430,23 @@ ${bottomDrawer()}
 // <noscript> static footer keeps every link reachable when JS is off.
 // NOTE: this drawer will later be GATED/AUTHENTICATED (the handle stays public,
 // the panel contents become operator-only).
+/* 2026-07-21 — a slim TWO-ITEM footer. This partially reverses D6's "hide the
+ * drawer entirely": the drawer stays gone, but these two doors come back.
+ *
+ * Both destinations are passphrase-gated, so linking them publicly is safe — the
+ * gate is the protection, not the obscurity. Nobody is kept out by a missing
+ * link; the only person kept out was the volunteer who could not find the door,
+ * which is precisely why zero volunteers exist and matching has never once run.
+ *
+ * Deliberately NOT restoring Coming / More / Updates / Ideas / To-do. */
+function siteFooter() {
+  return `<div class="wrap"><footer class="sitefoot" style="text-align:center">
+    <a href="/volunteer" style="font-weight:700;text-decoration:none">For buddies</a>
+    <span class="dot" style="margin:0 10px">·</span>
+    <a href="/admin" style="font-weight:700;text-decoration:none">Admin login</a>
+  </footer></div>`;
+}
+
 function bottomDrawer() {
   // V1.0.0 (C2): the whole drawer is HIDDEN. Toby's call — the launch chrome is the
   // three-item top nav and nothing else. Every link below stays reachable by typing
@@ -683,6 +711,87 @@ function signupScript() {
 </script>`;
 }
 
+/* ---------- page: the group interstitial (GET /group) ----------------------- */
+/* 2026-07-21. Toby wants the WhatsApp group on the menu. The nav renders on /,
+ * /signup, /events and /lessons — all INDEXABLE — so the raw invite must never be
+ * the nav target: it would be crawled, harvested, and the newcomers' group fills
+ * with spam accounts. An invite URL is a permanent open door, and unlike a
+ * password it cannot be rotated without disrupting everyone already inside.
+ *
+ * So the nav points HERE, and this page is the airlock:
+ *   noindex, out of the sitemap, and the invite itself arrives from /api/me
+ *   behind a valid device token. A tokenless visitor gets a warm nudge to sign
+ *   up and NO invite URL in the markup at all — not hidden, not present.
+ *
+ * Same protection as the /welcome known state; moving the link must not lose it. */
+
+function groupPage() {
+  return page(`Join the ${WHATSAPP_GROUP_NAME}`, `
+    <div id="tb-group-known" hidden></div>
+    <div id="tb-group-stranger">
+      <span class="badge">Boston Tango · The Group</span>
+      <h1>The <span class="accent">${esc(WHATSAPP_GROUP_NAME)}</span> group</h1>
+      <p class="lede">A WhatsApp room for people who are just finding their way into
+        Boston tango. Questions, nerves, which milonga to try first. Nobody bites.</p>
+      <div class="card" style="text-align:center">
+        <p style="margin:0 0 14px">We keep the invite for people who have signed up, so the
+          room stays newcomers and not bots. Sign up and we will bring you straight in.</p>
+        <a class="submit" href="/signup"
+          style="display:block;text-align:center;text-decoration:none">Get started</a>
+        <p class="foot" style="margin-top:16px">Already signed up on this phone? Give it a
+          moment — the invite appears here automatically.</p>
+      </div>
+    </div>
+    ${groupStateScript()}
+  `);
+}
+
+/* The invite is fetched, never rendered server-side. See groupPage's header. */
+function groupStateScript() {
+  return `<script>
+(function(){
+  var LSK='tb_token';
+  var known=document.getElementById('tb-group-known');
+  var stranger=document.getElementById('tb-group-stranger');
+  if(!known||!stranger) return;
+  var tok; try{tok=localStorage.getItem(LSK);}catch(e){return;}
+  if(!tok) return;
+  function el(tag,cls,text){var n=document.createElement(tag);
+    if(cls)n.className=cls; if(text!=null)n.textContent=text; return n;}
+  fetch('/api/me?token='+encodeURIComponent(tok),{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){
+      // No record, or no invite issued: leave the stranger state exactly as it is.
+      if(!d||!d.newbie||!d.groupUrl){
+        if(d&&!d.newbie){try{localStorage.removeItem(LSK);}catch(e){}}
+        return;
+      }
+      var name=String(d.newbie.name==null?'':d.newbie.name).trim();
+      var first=name?name.split(/\\s+/)[0]:'';
+      known.appendChild(el('span','badge','Boston Tango · The Group'));
+      var h=el('h1'); h.appendChild(document.createTextNode(
+        first?('You are in, '+first+'.'):'You are in.'));
+      known.appendChild(h);
+      known.appendChild(el('p','lede',
+        'This is the ${WHATSAPP_GROUP_NAME} room: people who are also just starting, '
+        + 'working out which milonga to try and what the codes mean. Say hello when you '
+        + 'arrive. Nobody bites, and no question is too basic.'));
+      var card=el('div','card');
+      var a=el('a',null,'Open the group in WhatsApp');
+      a.href=d.groupUrl; a.target='_blank'; a.rel='noopener noreferrer';
+      a.className='submit';
+      a.style.display='block'; a.style.textAlign='center'; a.style.textDecoration='none';
+      card.appendChild(a);
+      card.appendChild(el('p','foot',
+        'It is the wider community room, not a private chat with your buddy.'));
+      known.appendChild(card);
+      stranger.hidden=true; known.hidden=false;
+    })
+    .catch(function(){});
+})();
+</script>`;
+}
+
 /* ---------- the mission copy (V1.1.0 D4b) ----------------------------------- */
 /* Toby's four beats. Rendered SERVER-SIDE so a crawler and a JS-less visitor both
  * get real content, and so a curious stranger meets an explanation rather than a
@@ -792,7 +901,7 @@ function welcomeStateScript() {
       // /api/me (token-gated) and is never present in this page's source.
       if(d.groupUrl){
         var card=el('div','card');
-        card.appendChild(el('h3',null,'Join the Tango Practice Adventurers'));
+        card.appendChild(el('h3',null,'Join the ${WHATSAPP_GROUP_NAME}'));
         card.appendChild(el('p',null,
           'The wider community room on WhatsApp, where people finding their way in talk to '
           + 'each other. It is not a private chat with your buddy.'));
@@ -2035,6 +2144,9 @@ async function requestListener(req, res) {
       }
       if (pathname === '/signup') return send(res, 200, signupPage(url.searchParams.get('flash')));
       if (pathname === '/welcome') return send(res, 200, welcomePage());
+      // The group airlock. noindex by default (fail-closed page()) and NOT in
+      // PUBLIC_ROUTES, so it never reaches the sitemap — see groupPage's header.
+      if (pathname === '/group') return send(res, 200, groupPage());
       // V1.1.0 (D5): /volunteer is now behind the BUDDY tier. Toby hands the link
       // and phrase to people he has vetted; buddies are invited, not self-serve.
       if (pathname === '/volunteer') {
