@@ -200,7 +200,7 @@ const SITE_ORIGIN = 'https://bostontangobuddies.com';
 // — anyone holding the URL joins, no approval — so an indexed page carrying one
 // gets crawled and the group gets scraped. A page with personal content on it is
 // not a landing page and must never be indexable.
-const PUBLIC_ROUTES = ['/', '/signup', '/events', '/lessons'];
+const PUBLIC_ROUTES = ['/', '/signup', '/events', '/lessons', '/privacy'];
 
 // V1.1.0 (D6a) — the community room. In-app chat is gone; we point at a group
 // that already exists.
@@ -444,6 +444,8 @@ function siteFooter() {
     <a href="/volunteer" style="font-weight:700;text-decoration:none">For buddies</a>
     <span class="dot" style="margin:0 10px">·</span>
     <a href="/admin" style="font-weight:700;text-decoration:none">Admin login</a>
+    <span class="dot" style="margin:0 10px">·</span>
+    <a href="/privacy" style="font-weight:700;text-decoration:none">Privacy</a>
   </footer></div>`;
 }
 
@@ -625,8 +627,15 @@ function signupPage(flash) {
           <textarea id="note" name="note" placeholder="Never danced, a little nervous, best evenings, etc."></textarea>
 
           <div class="consent">
+            <!-- E2a: the old wording was "I'm OK being connected to a local tango
+                 buddy", which a newcomer could reasonably read as their number going
+                 to ONE person. Vetted buddy volunteers can see the newcomer list with
+                 contact details, so the tick has to say that. Consent to something
+                 narrower than what happens is not consent. -->
             <input id="consent" name="consent" type="checkbox" value="on" required />
-            <label for="consent">I'm OK being connected to a local tango buddy.</label>
+            <label for="consent">I'm OK with our vetted buddy volunteers seeing my name and
+              contact, so one of them can reach out. <a href="/privacy">What we do with your
+              details</a>.</label>
           </div>
 
           <button class="submit" type="submit">Yes — sign me up!</button>
@@ -709,6 +718,70 @@ function signupScript() {
   }
 })();
 </script>`;
+}
+
+/* ---------- page: privacy (GET /privacy) ------------------------------------ */
+/* 2026-07-21, Toby's ask. PUBLIC and INDEXABLE by design — a privacy page that
+ * cannot be found is not doing its job.
+ *
+ * 🔴 THE RULE FOR THIS PAGE: it must never say something softer than what we
+ * actually do. If it does, it is not a privacy page, it is marketing.
+ *
+ * The buddy-visibility line is deliberately written for what is ABOUT to be true,
+ * not what is true this minute. Toby ruled 2026-07-21 that vetted buddies see the
+ * full newcomer list WITH contact details; the buddy console (PHASE-E) is not
+ * built yet, so today only Toby sees them. Over-disclosing is safe; a page that
+ * is accurate this week and misleading next week is not. Do not "correct" this
+ * back to "your buddy" when PHASE-E lands — it is already right.
+ *
+ * Keep it short. A nervous newcomer should read the whole thing. Do not pad it to
+ * look thorough. */
+
+function privacyPage() {
+  return page('Privacy — Boston Tango Buddies', `
+    <span class="badge">Boston Tango</span>
+    <h1>What we do with <span class="accent">your details</span></h1>
+    <p class="lede">Short version: we do not sell them, we do not give them away, and the
+      only people who see them are the volunteers who might reach out to you.</p>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px">What we keep</h3>
+      <p style="margin:0 0 14px">Your name, the contact you gave us, how you found us, and
+        anything you chose to tell us in the form. That is all. We do not ask for an
+        address, a birthday, or a payment method, and we never will.</p>
+
+      <h3 style="margin:0 0 10px">Who can see it</h3>
+      <p style="margin:0 0 14px">Toby, who runs this, and our <b>buddy volunteers</b> —
+        people we know and vet personally. They can see your name and contact details, so
+        that one of them can reach out and say hello. That is the whole reason we asked.</p>
+      <p style="margin:0 0 14px">If you said you did not want a buddy, nobody is assigned to
+        you and nobody will be. You are just on the list for event news.</p>
+
+      <h3 style="margin:0 0 10px">We do not sell it or give it out</h3>
+      <p style="margin:0 0 14px">Not to studios, not to teachers, not to anyone. <b>We sell
+        nothing. We take no cut. We are not a school and we are not anybody's booking
+        agent.</b> There is nothing for us to gain by passing your number on, so we do not.</p>
+
+      <h3 style="margin:0 0 10px">The WhatsApp group is optional</h3>
+      <p style="margin:0 0 14px">You do not have to join the ${esc(WHATSAPP_GROUP_NAME)}
+        group, and nothing changes if you skip it. If you do join, remember it is a normal
+        WhatsApp group: <b>everyone else in it can see your phone number</b>. That is how
+        WhatsApp works rather than anything we control, and it is worth knowing before you
+        tap join. You can leave at any time.</p>
+
+      <h3 style="margin:0 0 10px">No tracking</h3>
+      <p style="margin:0 0 14px">No advertising, no third-party trackers, no analytics
+        following you around. We are not building a profile of you.</p>
+
+      <h3 style="margin:0 0 10px">Getting removed</h3>
+      <p style="margin:0">Ask, and we will delete you. Tell your buddy, or reply to whoever
+        contacted you, and say you would like your details removed. You do not have to give
+        a reason, and nobody will try to talk you out of it.</p>
+    </div>
+
+    <p class="foot">Tango Buddy · Boston · if anything here is unclear, ask us and we will
+      say it plainly.</p>
+  `, { index: true, path: '/privacy' });
 }
 
 /* ---------- page: the group interstitial (GET /group) ----------------------- */
@@ -2147,6 +2220,8 @@ async function requestListener(req, res) {
       // The group airlock. noindex by default (fail-closed page()) and NOT in
       // PUBLIC_ROUTES, so it never reaches the sitemap — see groupPage's header.
       if (pathname === '/group') return send(res, 200, groupPage());
+      // Public and indexable on purpose — see privacyPage's header.
+      if (pathname === '/privacy') return send(res, 200, privacyPage());
       // V1.1.0 (D5): /volunteer is now behind the BUDDY tier. Toby hands the link
       // and phrase to people he has vetted; buddies are invited, not self-serve.
       if (pathname === '/volunteer') {
