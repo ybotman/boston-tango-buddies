@@ -757,10 +757,23 @@ function privacyPage() {
       <p style="margin:0 0 14px">If you said you did not want a buddy, nobody is assigned to
         you and nobody will be. You are just on the list for event news.</p>
 
-      <h3 style="margin:0 0 10px">We do not sell it or give it out</h3>
-      <p style="margin:0 0 14px">Not to studios, not to teachers, not to anyone. <b>We sell
-        nothing. We take no cut. We are not a school and we are not anybody's booking
-        agent.</b> There is nothing for us to gain by passing your number on, so we do not.</p>
+      <h3 style="margin:0 0 10px">We do not sell it, and studios do not get it</h3>
+      <p style="margin:0 0 14px">We sell your details to nobody, and no studio or teacher
+        will contact you out of the blue. <b>We sell nothing. We take no cut. We are not a
+        school and we are not anybody's booking agent.</b> There is nothing for us to gain
+        by passing your number on, so we do not.</p>
+      <p style="margin:0 0 14px"><b>One exception, and we will always tell you at the
+        time.</b> Some of our events are sponsored by a studio. If you sign up at one of
+        those, your details go to that studio as well as to us. When that applies, it is
+        written on the sign-up form itself, next to the tick box, with the studio named. If
+        the form says nothing about a sponsor, there is no sponsor and nobody else gets
+        your details.</p>
+
+      <h3 style="margin:0 0 10px">We will probably get in touch</h3>
+      <p style="margin:0 0 14px">We are a small group and we are hoping you are interested
+        in starting. Someone will reach out. <b>Some of that is automated, but we do not
+        mass-message</b> — you are not on a mailing list being blasted at, and a real person
+        is behind it.</p>
 
       <h3 style="margin:0 0 10px">The WhatsApp group is optional</h3>
       <p style="margin:0 0 14px">You do not have to join the ${esc(WHATSAPP_GROUP_NAME)}
@@ -1577,6 +1590,28 @@ async function adminPage(flash) {
       : '<span class="pill new">new</span>';
     const consentPill = n.consent
       ? '<span class="pill yes">yes</span>' : '<span class="pill no">no</span>';
+    // 🔒 do-not-contact. A flag that only annotates is theatre: if the table still
+    // hands a volunteer their number, we have not honoured the request. So here it
+    // has teeth — the row is marked, the contact is hidden behind a deliberate
+    // reveal rather than sitting in the default view, and the person cannot be
+    // assigned to a buddy at all (see matchControl below).
+    //
+    // Built ahead of the store support: doNotContact is absent on every record
+    // today, so this renders as normal. It is deliberately fail-safe — an absent
+    // flag means "not asked to be left alone", which is the correct default, and
+    // the teeth engage the moment Franklin lands the field.
+    const doNotContact = n.doNotContact === true;
+    const contactCell = doNotContact
+      ? `<details><summary style="cursor:pointer;color:var(--terra-d);font-weight:700">
+           hidden — asked not to be contacted</summary>
+           <div style="margin-top:6px">${esc(n.contact)}</div></details>`
+      : esc(n.contact);
+    const dncPill = doNotContact
+      ? '<div><span class="pill no" title="Asked to be left alone'
+        + (n.doNotContactAt ? ' on ' + esc(String(n.doNotContactAt).slice(0, 10)) : '')
+        + '">do not contact</span></div>'
+      : '';
+
     // D1a: wantsBuddy is a TRI-STATE and must be rendered as one.
     //   true      -> they asked for a buddy
     //   false     -> they explicitly declined. An explicit no is a real refusal.
@@ -1616,7 +1651,10 @@ async function adminPage(flash) {
     // real person in the system and the product could never run. Badging keeps
     // the operator honest about which he is relying on — an inference, not
     // consent. Flagged to Edison in PHASE-D-STATUS.md.
-    const matchControl = declinedBuddy
+    const matchControl = doNotContact
+      ? '<span class="empty" style="padding:0" title="They asked not to be contacted.">'
+        + 'do not contact — not matchable</span>'
+      : declinedBuddy
       ? '<span class="empty" style="padding:0" title="They declined a buddy at signup.">'
         + 'declined — not matchable</span>'
       : !volunteers.length
@@ -1666,8 +1704,8 @@ async function adminPage(flash) {
         </form>` : '<span class="empty" style="padding:0">no organizers</span>');
 
     return `<tr>
-      <td><b>${esc(n.name) || '(no name)'}</b></td>
-      <td>${esc(n.contact)}</td>
+      <td><b>${esc(n.name) || '(no name)'}</b>${dncPill}</td>
+      <td>${contactCell}</td>
       <td>${esc(n.platform)}</td>
       <td>${esc(n.origination) || '<span class="empty" style="padding:0">—</span>'}</td>
       <td>${wantsBuddyPill}${danceLabel}</td>
