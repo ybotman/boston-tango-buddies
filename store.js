@@ -36,6 +36,8 @@
  * Public surface (stable across any swap — all async):
  *   addNewbie(data) · listNewbies() · findNewbieByToken(token)
  *   addVolunteer(data) · listVolunteers() · setMatch(newbieId, volId)
+ *   findVolunteerByToken(token, opts?) · setVolunteerActive(volId, active)
+ *   backfillVolunteerTokens()
  *   listTeachers()                       (organizers inventory, used by EVENTS)
  *   listStudios() · addStudio(data) · updateStudio(studioId, data)  (LESSONS tab)
  *   getOrCreateBuddyThread(newbieId) · getRollingNewbiesThread()
@@ -49,7 +51,13 @@
  * Data shapes:
  *   newbie    { id, token, name, contact, platform, note, consent, status, buddyId,
  *               origination, readyForLessons, handedToOrganizerId, createdAt }
- *   volunteer { id, name, contact, area, availability, note, createdAt }
+ *   volunteer { id, token, name, contact, area, availability, note, createdAt,
+ *               firstName?, lastName?, contact2?, platform2?,
+ *               active?, activeChangedAt? }
+ *               token  = `vtok_` CREDENTIAL (CSPRNG). Grants the buddy console,
+ *                        which shows every newcomer's name + contact. Revocable
+ *                        per person via setVolunteerActive(id,false).
+ *               active = ABSENT means active. Only an explicit false revokes.
  *   organizer { id, name, studio, code, blurb, email, phone, whatsapp, web, demo }  (a.k.a teacher — used by EVENTS)
  *   studio    { id, name, phone, web, createdAt }                    (Studios/Teachers — the LESSONS tab)
  *   thread    { id, kind, newbieId, createdAt }   kind: 'buddy' | 'social'
@@ -73,6 +81,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const DB_PATH = path.join(__dirname, 'data', 'db.json');
 // Vercel-safe write target. On Vercel the project filesystem (where the bundled
@@ -97,6 +106,26 @@ const USE_D1 = !!(
 
 function id(prefix) {
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+/* --- credential-grade tokens -----------------------------------------------
+ * id() above is fine for record ids and for a newbie's `tok_` (which only ever
+ * shows a person their OWN page). It is NOT fine for a volunteer token.
+ *
+ * WHY THIS IS DIFFERENT: a volunteer token shows the FULL newcomer list with
+ * names and phone numbers (Toby's ruling). That makes it a credential guarding
+ * other people's personal data, so it must be unguessable.
+ *
+ * id() is not: it is a millisecond timestamp (knowable — it is roughly when the
+ * person signed up) plus ~5 base36 chars of Math.random(), which is a
+ * non-cryptographic PRNG. That is on the order of 25 bits of weak entropy — a
+ * feasible brute-force against a list of real people's contact details.
+ *
+ * secretToken() uses crypto.randomBytes: 192 bits from a CSPRNG. Built into
+ * Node, so no new dependency.
+ * ------------------------------------------------------------------------- */
+function secretToken(prefix) {
+  return prefix + '_' + crypto.randomBytes(24).toString('base64url');
 }
 
 /* ---------- backend abstraction --------------------------------------------
@@ -432,6 +461,9 @@ async function addVolunteer(data) {
 
   const volunteer = {
     id: id('v'),
+    // CREDENTIAL — see secretToken(). `vtok_` prefix so it can never be confused
+    // with a newbie's `tok_`, in a log, a cookie, or a support conversation.
+    token: secretToken('vtok'),
     name: combined || (data.name || '').trim(),
     contact: (data.contact || '').trim(),
     area: (data.area || '').trim(),
@@ -446,6 +478,69 @@ async function addVolunteer(data) {
 
   await backend.set('volunteers', volunteer.id, volunteer);
   return volunteer;
+}
+
+/**
+ * Resolve a volunteer token to the volunteer (the buddy console's credential).
+ *
+ * 🔒 FAILS CLOSED. Returns null for a falsy token, an unknown token, AND for a
+ * volunteer who has stepped back (`active === false`). Revocation is the entire
+ * reason we issue per-buddy tokens instead of one shared passphrase, so the
+ * revoked case is enforced HERE rather than left to each caller to remember —
+ * a forgotten check at one call site would hand a stepped-back buddy the full
+ * newcomer list.
+ *
+ * `active` is ABSENT on everyone who never stepped back, and absent means
+ * ACTIVE. Only an explicit `false` revokes. (Same absent-is-not-no rule as the
+ * newbie fields — we never wrote a default onto existing records.)
+ *
+ * @param {string} token
+ * @param {object} [opts] { includeInactive: true } for admin views that must
+ *                        still SEE a stepped-back buddy. Never use it to gate access.
+ */
+async function findVolunteerByToken(token, opts) {
+  if (!token) return null;
+  const all = await backend.all('volunteers');
+  const v = all.find((x) => x.token === token) || null;
+  if (!v) return null;
+  if (v.active === false && !(opts && opts.includeInactive)) return null;
+  return v;
+}
+
+/**
+ * Step-back / re-activate. The buddy pitch promises they can stop any time with
+ * no notice and no guilt, so the product has to honour it, not just the copy.
+ * Setting active=false immediately stops their token resolving (see above).
+ */
+async function setVolunteerActive(volunteerId, active) {
+  const v = await backend.get('volunteers', volunteerId);
+  if (!v) return null;
+  v.active = !(active === false || active === 'false' || active === 'no'
+    || active === 'off' || active === '0' || active === 0);
+  v.activeChangedAt = new Date().toISOString();
+  await backend.set('volunteers', v.id, v);
+  return v;
+}
+
+/**
+ * One-shot, idempotent: mint tokens for any volunteer created before tokens
+ * existed. Zero volunteers today, so this costs nothing now — but the first
+ * person Toby recruits could land in the gap between this commit and the
+ * console shipping, and a buddy with no token is a buddy who cannot get in.
+ *
+ * Safe to call repeatedly; only touches records that lack a token.
+ * @returns {{scanned:number, minted:number, ids:string[]}}
+ */
+async function backfillVolunteerTokens() {
+  const all = await backend.all('volunteers');
+  const minted = [];
+  for (const v of all) {
+    if (v.token) continue;
+    v.token = secretToken('vtok');
+    await backend.set('volunteers', v.id, v);
+    minted.push(v.id);
+  }
+  return { scanned: all.length, minted: minted.length, ids: minted };
 }
 
 async function listVolunteers() {
@@ -717,6 +812,9 @@ module.exports = {
   findNewbieByToken,
   addVolunteer,
   listVolunteers,
+  findVolunteerByToken,
+  setVolunteerActive,
+  backfillVolunteerTokens,
   setMatch,
   listTeachers,
   listStudios,

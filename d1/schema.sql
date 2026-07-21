@@ -64,12 +64,28 @@ FROM docs WHERE collection='newbies';
 DROP VIEW IF EXISTS volunteers;
 CREATE VIEW volunteers AS
 SELECT id,
-       json_extract(json,'$.name')         AS name,
-       json_extract(json,'$.contact')      AS contact,
-       json_extract(json,'$.area')         AS area,
-       json_extract(json,'$.availability') AS availability,
-       json_extract(json,'$.note')         AS note,
-       json_extract(json,'$.createdAt')    AS createdAt
+       json_extract(json,'$.name')            AS name,
+       json_extract(json,'$.contact')         AS contact,
+       json_extract(json,'$.area')            AS area,
+       json_extract(json,'$.availability')    AS availability,
+       json_extract(json,'$.note')            AS note,
+       json_extract(json,'$.createdAt')       AS createdAt,
+       json_extract(json,'$.firstName')       AS firstName,
+       json_extract(json,'$.lastName')        AS lastName,
+       json_extract(json,'$.contact2')        AS contact2,
+       json_extract(json,'$.platform2')       AS platform2,
+       -- Step-back flag. NULL means ACTIVE (never stepped back) — only an
+       -- explicit 0 revokes. `WHERE active = 1` would wrongly exclude every
+       -- buddy who simply never touched it.
+       json_extract(json,'$.active')          AS active,
+       json_extract(json,'$.activeChangedAt') AS activeChangedAt,
+       -- Deliberately NOT projected: `token`. It is a credential granting the
+       -- buddy console (every newcomer's name + phone). Keeping it out of the
+       -- convenience view means a casual `SELECT * FROM volunteers` — over
+       -- someone's shoulder, in a screenshot, pasted into a chat — cannot leak a
+       -- working key. Read it explicitly from `docs` when genuinely needed.
+       CASE WHEN json_extract(json,'$.token') IS NULL
+            THEN 'MISSING' ELSE 'set' END     AS tokenStatus
 FROM docs WHERE collection='volunteers';
 
 DROP VIEW IF EXISTS organizers;
