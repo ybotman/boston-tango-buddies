@@ -699,6 +699,8 @@ function missionBody() {
       their first night. The music is strange, everyone seems to know each other, and there
       are rules nobody writes down.</p>
     ${heroBlock()}
+    <h2 class="tier-h" style="font-size:20px;font-weight:800;margin:22px 0 12px">
+      Boston Tango · come dance with us</h2>
     <div class="card">
       <p style="margin:0 0 14px">It takes time to learn. That part does not shorten. What
         changes is whether you walk it on your own.</p>
@@ -1028,8 +1030,11 @@ function volunteerPage(flash) {
         rude to leave.</p>
 
       <h3 style="margin:0 0 10px">You are not their teacher</h3>
-      <p style="margin:0 0 14px">You never correct anyone's technique and you never give a
-        lesson. Teachers teach. You point them at teachers.</p>
+      <p style="margin:0 0 14px">And you are not expected to be. That pressure is off.
+        If they ask you something and you can genuinely help, then help. Do not police
+        yourself. Just do not take over the teaching: point them toward the teachers and
+        the places that suit <b>them</b>, the corner of the scene they take to, rather than
+        the one you would have picked.</p>
 
       <h3 style="margin:0 0 10px">You are not their dance partner</h3>
       <p style="margin:0 0 14px">You never have to dance with them. Not once.</p>
